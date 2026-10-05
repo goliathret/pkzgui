@@ -1,0 +1,3 @@
+[submodule "external/PKZLib"]
+	path = external/PKZLib
+	url = https://github.com/goliathret/PKZLib.git
