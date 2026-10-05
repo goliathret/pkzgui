@@ -111,6 +111,264 @@ namespace
             ListView_DeleteAllItems(gList);
     }
 
+    std::vector<std::wstring> CollectSchemaPaths()
+    {
+        std::vector<std::wstring> found;
+        const std::wstring dirs[] = {
+            ExeDir() + L"\\schemas",
+            ExeDir() + L"\\..\\schemas",
+            ExeDir() + L"\\..\\..\\schemas",
+            L"schemas",
+            L"..\\schemas",
+        };
+        for (const std::wstring& dir : dirs)
+        {
+            const std::wstring pattern = dir + L"\\*.xml";
+            WIN32_FIND_DATAW fd{};
+            HANDLE h = FindFirstFileW(pattern.c_str(), &fd);
+            if (h == INVALID_HANDLE_VALUE)
+                continue;
+            do
+            {
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+                    continue;
+                const std::wstring full = dir + L"\\" + fd.cFileName;
+                bool dup = false;
+                for (const auto& p : found)
+                {
+                    const size_t slash = p.find_last_of(L"\\/");
+                    const std::wstring base = slash == std::wstring::npos ? p : p.substr(slash + 1);
+                    if (_wcsicmp(base.c_str(), fd.cFileName) == 0)
+                    {
+                        dup = true;
+                        break;
+                    }
+                }
+                if (!dup)
+                    found.push_back(full);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+        return found;
+    }
+
+    enum : int
+    {
+        IDC_SCHEMA_LIST = 2001,
+        IDC_SCHEMA_OK = 2002,
+        IDC_SCHEMA_CANCEL = 2003,
+        IDC_PROG_BAR = 2101,
+        IDC_PROG_LABEL = 2102,
+    };
+
+    struct SchemaPickerState
+    {
+        std::vector<std::wstring> paths;
+        std::wstring chosen;
+    };
+
+    LRESULT CALLBACK SchemaPickerProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+    {
+        SchemaPickerState* st = reinterpret_cast<SchemaPickerState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        switch (msg)
+        {
+        case WM_CREATE:
+        {
+            CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+            st = reinterpret_cast<SchemaPickerState*>(cs->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(st));
+            HWND list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTBOXW, L"",
+                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+                12, 12, 360, 200, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCHEMA_LIST)), gInst, nullptr);
+            const std::wstring exe = ExeDir();
+            for (size_t i = 0; i < st->paths.size(); ++i)
+            {
+                const std::wstring& full = st->paths[i];
+                std::wstring display = full;
+                if (full.size() > exe.size() && _wcsnicmp(full.c_str(), exe.c_str(), exe.size()) == 0)
+                {
+                    size_t skip = exe.size();
+                    while (skip < full.size() && (full[skip] == L'\\' || full[skip] == L'/'))
+                        ++skip;
+                    display = full.substr(skip);
+                }
+                else
+                {
+                    const size_t slash = full.find_last_of(L"\\/");
+                    if (slash != std::wstring::npos)
+                        display = full.substr(slash + 1);
+                }
+                const int idx = static_cast<int>(SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(display.c_str())));
+                SendMessageW(list, LB_SETITEMDATA, idx, static_cast<LPARAM>(i));
+            }
+            if (!st->paths.empty())
+                SendMessageW(list, LB_SETCURSEL, 0, 0);
+            CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+                200, 230, 80, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCHEMA_OK)), gInst, nullptr);
+            CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+                290, 230, 80, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_SCHEMA_CANCEL)), gInst, nullptr);
+            return 0;
+        }
+        case WM_COMMAND:
+        {
+            const int id = LOWORD(wParam);
+            if (id == IDC_SCHEMA_OK || (id == IDC_SCHEMA_LIST && HIWORD(wParam) == LBN_DBLCLK))
+            {
+                HWND list = GetDlgItem(hwnd, IDC_SCHEMA_LIST);
+                const int sel = static_cast<int>(SendMessageW(list, LB_GETCURSEL, 0, 0));
+                if (sel >= 0)
+                {
+                    const size_t pathIdx = static_cast<size_t>(SendMessageW(list, LB_GETITEMDATA, sel, 0));
+                    if (pathIdx < st->paths.size())
+                        st->chosen = st->paths[pathIdx];
+                }
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            if (id == IDC_SCHEMA_CANCEL)
+            {
+                st->chosen.clear();
+                DestroyWindow(hwnd);
+                return 0;
+            }
+            break;
+        }
+        case WM_CLOSE:
+            st->chosen.clear();
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            PostQuitMessage(0);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    bool ShowSchemaPicker(std::wstring& outPath)
+    {
+        auto paths = CollectSchemaPaths();
+        if (paths.empty())
+            return false;
+        if (paths.size() == 1)
+        {
+            outPath = paths[0];
+            return true;
+        }
+        SchemaPickerState st;
+        st.paths = std::move(paths);
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = SchemaPickerProc;
+        wc.hInstance = gInst;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.lpszClassName = L"pkzgui.SchemaPicker";
+        RegisterClassExW(&wc);
+        HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, wc.lpszClassName, L"Select schema",
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, CW_USEDEFAULT, CW_USEDEFAULT, 400, 300,
+            nullptr, nullptr, gInst, &st);
+        if (!hwnd)
+            return false;
+        ShowWindow(hwnd, SW_SHOW);
+        UpdateWindow(hwnd);
+        MSG msg;
+        while (GetMessageW(&msg, nullptr, 0, 0) > 0)
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        UnregisterClassW(L"pkzgui.SchemaPicker", gInst);
+        if (st.chosen.empty())
+            return false;
+        outPath = std::move(st.chosen);
+        return true;
+    }
+
+    struct ProgressState
+    {
+        HWND hwnd = nullptr;
+        HWND bar = nullptr;
+        HWND label = nullptr;
+        bool cancelled = false;
+    };
+
+    LRESULT CALLBACK ProgressProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+    {
+        ProgressState* st = reinterpret_cast<ProgressState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        switch (msg)
+        {
+        case WM_CREATE:
+        {
+            CREATESTRUCTW* cs = reinterpret_cast<CREATESTRUCTW*>(lParam);
+            st = reinterpret_cast<ProgressState*>(cs->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(st));
+            st->hwnd = hwnd;
+            st->label = CreateWindowExW(0, L"STATIC", L"Opening package...",
+                WS_CHILD | WS_VISIBLE | SS_LEFT, 16, 16, 360, 20, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PROG_LABEL)), gInst, nullptr);
+            st->bar = CreateWindowExW(0, PROGRESS_CLASSW, L"",
+                WS_CHILD | WS_VISIBLE | PBS_SMOOTH, 16, 44, 360, 22, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PROG_BAR)), gInst, nullptr);
+            SendMessageW(st->bar, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
+            SendMessageW(st->bar, PBM_SETPOS, 0, 0);
+            return 0;
+        }
+        case WM_CLOSE:
+            st->cancelled = true;
+            return 0;
+        }
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    ProgressState* BeginProgress(const std::wstring& title)
+    {
+        static ProgressState st;
+        st = {};
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ProgressProc;
+        wc.hInstance = gInst;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        wc.lpszClassName = L"pkzgui.Progress";
+        RegisterClassExW(&wc);
+        HWND hwnd = CreateWindowExW(WS_EX_DLGMODALFRAME, wc.lpszClassName, title.c_str(),
+            WS_OVERLAPPED | WS_CAPTION, CW_USEDEFAULT, CW_USEDEFAULT, 400, 120,
+            gMain, nullptr, gInst, &st);
+        if (!hwnd)
+            return nullptr;
+        EnableWindow(gMain, FALSE);
+        ShowWindow(hwnd, SW_SHOW);
+        UpdateWindow(hwnd);
+        return &st;
+    }
+
+    void SetProgress(ProgressState* st, int pct, const std::wstring& text)
+    {
+        if (!st || !st->hwnd)
+            return;
+        if (st->label && !text.empty())
+            SetWindowTextW(st->label, text.c_str());
+        if (st->bar)
+            SendMessageW(st->bar, PBM_SETPOS, pct, 0);
+        MSG msg;
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    void EndProgress(ProgressState* st)
+    {
+        if (!st || !st->hwnd)
+            return;
+        DestroyWindow(st->hwnd);
+        st->hwnd = nullptr;
+        EnableWindow(gMain, TRUE);
+        if (gMain)
+            SetForegroundWindow(gMain);
+        UnregisterClassW(L"pkzgui.Progress", gInst);
+    }
+
     void FillList(const std::vector<pkzgui::Row>& rows)
     {
         ClearList();
@@ -326,20 +584,25 @@ namespace
 
     bool LoadPackageFromPath(const std::wstring& path)
     {
+        ProgressState* prog = BeginProgress(L"Opening package");
+        SetProgress(prog, 10, L"Reading file...");
         try
         {
             auto pkg = std::make_unique<PKPackage>();
+            SetProgress(prog, 40, L"Parsing package...");
             pkg->ReadFromFile(Narrow(path));
+            SetProgress(prog, 80, L"Building tree...");
             gPackage = std::move(pkg);
             gPackagePath = path;
             RebuildTree();
-
-            std::wstring title = L"pkzgui";
-            SetWindowTextW(gMain, title.c_str());
+            SetProgress(prog, 100, L"Done");
+            EndProgress(prog);
+            SetWindowTextW(gMain, L"pkzgui");
             return true;
         }
         catch (const std::exception& ex)
         {
+            EndProgress(prog);
             MessageBoxW(gMain, Widen(ex.what()).c_str(), L"Failed to open package, probably from a different game?", MB_ICONERROR | MB_OK);
             return false;
         }
@@ -609,10 +872,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     ShowWindow(gMain, nCmdShow);
     UpdateWindow(gMain);
 
-    int argc = 0;
-    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     std::wstring schemaArg;
     std::wstring packageArg;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv)
     {
         for (int i = 1; i < argc; ++i)
@@ -631,9 +894,17 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     }
 
     if (!schemaArg.empty())
+    {
         LoadSchemaFromPath(schemaArg);
+    }
     else
-        TryDefaultSchema();
+    {
+        std::wstring picked;
+        if (ShowSchemaPicker(picked))
+            LoadSchemaFromPath(picked);
+        else
+            TryDefaultSchema();
+    }
 
     if (!packageArg.empty())
         LoadPackageFromPath(packageArg);
