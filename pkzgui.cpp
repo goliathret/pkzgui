@@ -217,7 +217,24 @@ namespace
             name = labeler.ChunkLabel(chunk);
         else
             name = ToString(chunk.GetIDToEnum());
-
+        if (gSchemaLoaded)
+        {
+            const auto headers = chunk.FindInChildren(CMChunkTypes::GenSub_ResourceHeader);
+            if (!headers.empty())
+            {
+                pkzgui::Decoder dec(&gSchema, PackageFindChunk);
+                std::vector<pkzgui::Row> rows;
+                dec.Describe(headers.front(), rows, kMaxFieldRows);
+                for (const auto& r : rows)
+                {
+                    if (r.name == "name" && !r.value.empty())
+                    {
+                        name = r.value;
+                        break;
+                    }
+                }
+            }
+        }
         char text[512];
         std::snprintf(text, sizeof(text), "%s  [0x%X] v%u  %s  %llu",
             name.c_str(),
@@ -225,11 +242,9 @@ namespace
             chunk.GetVersion(),
             chunk.GetHasChildren() ? "folder" : "leaf",
             static_cast<unsigned long long>(chunk.GetLength()));
-
         const std::wstring wtext = Widen(text);
         const size_t idx = gChunkIndex.size();
         gChunkIndex.push_back(&chunk);
-
         TVINSERTSTRUCTW ins{};
         ins.hParent = parent;
         ins.hInsertAfter = TVI_LAST;
@@ -237,7 +252,6 @@ namespace
         ins.item.pszText = const_cast<wchar_t*>(wtext.c_str());
         ins.item.lParam = static_cast<LPARAM>(idx);
         ins.item.cChildren = chunk.GetHasChildren() && !chunk.children.empty() ? 1 : 0;
-
         HTREEITEM item = TreeView_InsertItem(gTree, &ins);
         if (chunk.GetHasChildren())
         {

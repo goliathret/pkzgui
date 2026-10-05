@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="pkzgui.vcxproj" />
+  <Project Path="pkzgui.vcxproj" Id="ab0e015c-1807-4246-8331-4b0ead038eca" />
 </Solution>
