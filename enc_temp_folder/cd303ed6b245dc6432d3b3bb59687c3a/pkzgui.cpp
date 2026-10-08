@@ -1596,6 +1596,7 @@ namespace
                 DestroyWindow(hwnd);
                 return 0;
             case WM_DESTROY:
+                // Do NOT PostQuitMessage — that would close the main app.
                 return 0;
             }
             return DefWindowProcW(hwnd, msg, wParam, lParam);
