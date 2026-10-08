@@ -27,11 +27,15 @@
 #include <vector>
 
 #include "Package/CMChunk.h"
+#include "Package/CMChunkTypes.h"
 #include "Package/PKPackage.h"
+#include "Resource/ResourceHeader.h"
+#include "Resource/RZTexture.h"
 #include "pkzgui_schema.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "gdi32.lib")
 #pragma comment(linker, "/manifestdependency:\"type='win32' name='Microsoft.Windows.Common-Controls' " \
                         "version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
@@ -42,12 +46,16 @@ namespace
         IDC_TREE = 1001,
         IDC_LIST = 1002,
         IDC_STATUS = 1003,
+        IDC_PREVIEW = 1004,
         IDM_FILE_OPEN = 40001,
         IDM_FILE_SCHEMA = 40002,
         IDM_FILE_EXIT = 40003,
         IDM_VIEW_EXPAND = 40010,
         IDM_VIEW_COLLAPSE = 40011,
+        IDM_VIEW_SIMPLE = 40012,
     };
+
+    constexpr LPARAM kTreeTexFlag = static_cast<LPARAM>(1u << 31);
 
     constexpr int kSplitDefault = 340;
     constexpr size_t kMaxFieldRows = 200000;
@@ -57,8 +65,13 @@ namespace
     HWND gTree = nullptr;
     HWND gList = nullptr;
     HWND gStatus = nullptr;
+    HWND gPreview = nullptr;
     int gSplitX = kSplitDefault;
     bool gDragging = false;
+    bool gSimpleView = false;
+    HBITMAP gPreviewBmp = nullptr;
+    int gPreviewW = 0;
+    int gPreviewH = 0;
 
     pkzgui::Schema gSchema;
     bool gSchemaLoaded = false;
@@ -67,6 +80,7 @@ namespace
 
     std::unique_ptr<PKPackage> gPackage;
     std::vector<const CMChunk*> gChunkIndex;
+    std::vector<CMChunkResourceHeader> gTextureHeaders;
 
     std::wstring Widen(const std::string& s)
     {
@@ -109,6 +123,172 @@ namespace
     {
         if (gList)
             ListView_DeleteAllItems(gList);
+    }
+
+    void ClearPreview()
+    {
+        if (gPreviewBmp)
+        {
+            if (gPreview)
+                SendMessageW(gPreview, STM_SETIMAGE, IMAGE_BITMAP, 0);
+            DeleteObject(gPreviewBmp);
+            gPreviewBmp = nullptr;
+        }
+        gPreviewW = gPreviewH = 0;
+        if (gPreview)
+            ShowWindow(gPreview, SW_HIDE);
+    }
+
+    const char* SimpleLibraryName(uint32_t maskedId)
+    {
+        switch (static_cast<CMChunkTypes>(maskedId))
+        {
+        case Gen_TextureLibrary: return "Textures";
+        case Gen_GeometryLibrary: return "Geometry";
+        case Gen_FontLibrary: return "Fonts";
+        case Gen_HierarchyLibrary: return "Hierarchies";
+        case Gen_HAnimLibrary: return "HAnims";
+        case Gen_GameObjLibrary: return "Game Objects";
+        case Gen_LogicLibrary: return "Logic";
+        case Gen_AudioLibrary: return "Audio";
+        case Gen_ParticleLibrary: return "Particles";
+        case Gen_MovieLibrary: return "Movies";
+        case Gen_StringTableLibrary: return "String Tables";
+        case Gen_HUDLibrary: return "HUD";
+        case Gen_BinaryDataLibrary: return "Binary Data";
+        case Gen_CutSceneLibrary: return "Cutscenes";
+        case Gen_MaterialAnimLibrary: return "Material Anims";
+        case Gen_TextStyleLibrary: return "Text Styles";
+        case Gen_CurveLibrary: return "Curves";
+        case Gen_AnimCueLibrary: return "Anim Cues";
+        case Gen_AnimTreeLibrary: return "Anim Trees";
+        case Gen_EnvironmentLibrary: return "Environments";
+        case Gen_ZoneLibrary: return "Zones";
+        case Gen_BillboardLibrary: return "Billboards";
+        case Gen_FoliageLibrary: return "Foliage";
+        case Gen_ParamBlockLibrary: return "Param Blocks";
+        case Gen_BSplineLibrary: return "BSplines";
+        case Gen_ResourcesListLibrary: return "Resources Lists";
+        case Gen_MotionTrailLibrary: return "Motion Trails";
+        case Gen_ReflectionSourceLibrary: return "Reflection Sources";
+        case Gen_HAnimProcLibrary: return "HAnim Procs";
+        case Gen_AudioSoundLibrary: return "Audio Sounds";
+        case Gen_AudioCueLibrary: return "Audio Cues";
+        case Gen_AudioSampleLibrary: return "Audio Samples";
+        case Gen_AudioCategoryLibrary: return "Audio Categories";
+        case Gen_AudioRPCLibrary: return "Audio RPCs";
+        case Gen_AudioSampleBankLibrary: return "Audio Sample Banks";
+        default: return nullptr;
+        }
+    }
+
+    bool IsLibraryChunk(uint32_t maskedId)
+    {
+        return SimpleLibraryName(maskedId) != nullptr;
+    }
+
+    HBITMAP CreateBitmapFromRGBA(const uint8_t* rgba, int width, int height)
+    {
+        if (!rgba || width <= 0 || height <= 0)
+            return nullptr;
+
+        BITMAPINFO bmi{};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* bits = nullptr;
+        HBITMAP bmp = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!bmp || !bits)
+            return nullptr;
+
+        auto* dst = static_cast<uint8_t*>(bits);
+        const size_t n = static_cast<size_t>(width) * static_cast<size_t>(height);
+        for (size_t i = 0; i < n; ++i)
+        {
+            dst[i * 4 + 0] = rgba[i * 4 + 2];
+            dst[i * 4 + 1] = rgba[i * 4 + 1];
+            dst[i * 4 + 2] = rgba[i * 4 + 0];
+            dst[i * 4 + 3] = rgba[i * 4 + 3];
+        }
+        return bmp;
+    }
+
+    void ShowTextureInPreview(const RZTexture& tex)
+    {
+        ClearPreview();
+        try
+        {
+            const std::vector<uint8_t> rgba = tex.DecodeLevel0();
+            gPreviewBmp = CreateBitmapFromRGBA(rgba.data(), static_cast<int>(tex.desc.width),
+                static_cast<int>(tex.desc.height));
+            gPreviewW = static_cast<int>(tex.desc.width);
+            gPreviewH = static_cast<int>(tex.desc.height);
+            if (gPreviewBmp && gPreview)
+            {
+                SendMessageW(gPreview, STM_SETIMAGE, IMAGE_BITMAP, reinterpret_cast<LPARAM>(gPreviewBmp));
+                ShowWindow(gPreview, SW_SHOW);
+            }
+        }
+        catch (const std::exception&)
+        {
+        }
+    }
+
+    void FillList(const std::vector<pkzgui::Row>& rows);
+    void LayoutChildren(int cx, int cy);
+
+    void ShowTextureResource(size_t texIdx)
+    {
+        ClearPreview();
+        if (!gPackage || texIdx >= gTextureHeaders.size())
+        {
+            ClearList();
+            return;
+        }
+
+        const CMChunkResourceHeader& hdr = gTextureHeaders[texIdx];
+        std::vector<pkzgui::Row> rows;
+        rows.push_back({ 0, "Texture Resource", "", "", "" });
+        rows.push_back({ 1, "name", "", "string", hdr.GetName() });
+        rows.push_back({ 1, "type", "", "", hdr.GetResourceTypeName() });
+        rows.push_back({ 1, "crc", "", "u32", pkzgui::Hex(hdr.GetCRC()) });
+        rows.push_back({ 1, "languageMask", "", "u32", pkzgui::Hex(hdr.GetLanguageMask()) });
+        rows.push_back({ 1, "qualityLevel", "", "u32", std::to_string(hdr.GetQualityLevel()) });
+        rows.push_back({ 1, "dataOffset", "", "u64", pkzgui::Hex(static_cast<uint64_t>(hdr.GetDataOffset())) });
+        rows.push_back({ 1, "postLoadDataCRC", "", "u32", pkzgui::Hex(hdr.GetPostLoadDataCRC()) });
+
+        try
+        {
+            RZTexture tex = RZTexture::Load(*gPackage, hdr);
+            rows.push_back({ 0, "Descriptor", "", "", "" });
+            rows.push_back({ 1, "width", "", "u32", std::to_string(tex.desc.width) });
+            rows.push_back({ 1, "height", "", "u32", std::to_string(tex.desc.height) });
+            rows.push_back({ 1, "mipLevels", "", "u32", std::to_string(tex.desc.mipLevels) });
+            rows.push_back({ 1, "dimension", "", "u32", std::to_string(tex.desc.dimension) });
+            rows.push_back({ 1, "d3dFormat", "", "u32", pkzgui::Hex(tex.desc.d3dFormat) });
+            rows.push_back({ 1, "gpuData", "", "bytes", std::to_string(tex.gpuData.size()) });
+            ShowTextureInPreview(tex);
+
+            wchar_t status[256];
+            swprintf_s(status, L"Texture: %s  %ux%u  mips=%u  gpu=%zu bytes",
+                Widen(tex.name).c_str(), tex.desc.width, tex.desc.height, tex.desc.mipLevels, tex.gpuData.size());
+            SetStatus(status);
+        }
+        catch (const std::exception& ex)
+        {
+            rows.push_back({ 1, "error", "", "", ex.what() });
+            SetStatus(L"Texture decode failed: " + Widen(ex.what()));
+        }
+
+        FillList(rows);
+
+        RECT rc;
+        if (gMain && GetClientRect(gMain, &rc))
+            LayoutChildren(rc.right - rc.left, rc.bottom - rc.top);
     }
 
     std::vector<std::wstring> CollectSchemaPaths()
@@ -425,11 +605,41 @@ namespace
 
     void ShowChunkFields(const CMChunk* chunk)
     {
+        ClearPreview();
         if (!chunk)
         {
             ClearList();
             return;
         }
+
+        if (gPackage)
+        {
+            const CMChunk* headerChunk = nullptr;
+            if (chunk->GetMaskedID() == static_cast<uint32_t>(GenSub_ResourceHeader))
+                headerChunk = chunk;
+            else if (chunk->GetMaskedID() == static_cast<uint32_t>(GenSub_Resource))
+                headerChunk = chunk->FindChild(static_cast<uint32_t>(GenSub_ResourceHeader));
+
+            if (headerChunk)
+            {
+                try
+                {
+                    CMChunkResourceHeader hdr(*headerChunk);
+                    if (hdr.GetResourceType() == kCMResourceType_Texture)
+                    {
+                        gTextureHeaders.clear();
+                        gTextureHeaders.push_back(hdr);
+                        ShowTextureResource(0);
+                        return;
+                    }
+                }
+                catch (...)
+                {
+                    // fall through to normal field view
+                }
+            }
+        }
+
         if (!gSchemaLoaded)
         {
             ClearList();
@@ -465,6 +675,10 @@ namespace
             chunk->GetHasChildren() ? L"container" : L"leaf",
             static_cast<unsigned long long>(chunk->GetLength()));
         SetStatus(status);
+
+        RECT rc;
+        if (gMain && GetClientRect(gMain, &rc))
+            LayoutChildren(rc.right - rc.left, rc.bottom - rc.top);
     }
 
     HTREEITEM InsertChunkItem(HTREEITEM parent, const CMChunk& chunk, int depth)
@@ -519,16 +733,146 @@ namespace
         return item;
     }
 
-    void RebuildTree()
+    HTREEITEM InsertTreeText(HTREEITEM parent, const std::wstring& text, LPARAM param, bool hasChildren)
     {
-        if (!gTree)
-            return;
-        TreeView_DeleteAllItems(gTree);
-        gChunkIndex.clear();
-        ClearList();
+        TVINSERTSTRUCTW ins{};
+        ins.hParent = parent;
+        ins.hInsertAfter = TVI_LAST;
+        ins.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN;
+        ins.item.pszText = const_cast<wchar_t*>(text.c_str());
+        ins.item.lParam = param;
+        ins.item.cChildren = hasChildren ? 1 : 0;
+        return TreeView_InsertItem(gTree, &ins);
+    }
+
+    void CollectLibraries(std::vector<const CMChunk*>& out)
+    {
         if (!gPackage)
             return;
+        for (const CMChunk& root : gPackage->rootChunks)
+        {
+            if (IsLibraryChunk(root.GetMaskedID()))
+                out.push_back(&root);
+            if (root.GetMaskedID() == static_cast<uint32_t>(Root))
+            {
+                for (const CMChunk& child : root.children)
+                {
+                    if (IsLibraryChunk(child.GetMaskedID()))
+                        out.push_back(&child);
+                }
+            }
+        }
+    }
 
+    void RebuildTreeSimple()
+    {
+        gTextureHeaders.clear();
+        std::vector<const CMChunk*> libs;
+        CollectLibraries(libs);
+
+        struct Group
+        {
+            std::string title;
+            std::vector<const CMChunk*> libs;
+            bool isTexture = false;
+        };
+        std::vector<Group> groups;
+        auto findGroup = [&](const char* title) -> Group*
+            {
+                for (auto& g : groups)
+                    if (g.title == title)
+                        return &g;
+                return nullptr;
+            };
+
+        for (const CMChunk* lib : libs)
+        {
+            const char* title = SimpleLibraryName(lib->GetMaskedID());
+            if (!title)
+                continue;
+            Group* g = findGroup(title);
+            if (!g)
+            {
+                groups.push_back({ title, {}, lib->GetMaskedID() == static_cast<uint32_t>(Gen_TextureLibrary) });
+                g = &groups.back();
+            }
+            g->libs.push_back(lib);
+        }
+
+        for (const Group& g : groups)
+        {
+            size_t resourceCount = 0;
+            for (const CMChunk* lib : g.libs)
+                resourceCount += lib->FindChildren(static_cast<uint32_t>(GenSub_Resource)).size();
+
+            wchar_t groupLabel[256];
+            swprintf_s(groupLabel, L"%hs  (%zu)", g.title.c_str(), resourceCount);
+            HTREEITEM groupItem = InsertTreeText(TVI_ROOT, groupLabel, static_cast<LPARAM>(-1), resourceCount > 0);
+
+            for (const CMChunk* lib : g.libs)
+            {
+                for (const CMChunk* res : lib->FindChildren(static_cast<uint32_t>(GenSub_Resource)))
+                {
+                    const CMChunk* hChunk = res->FindChild(static_cast<uint32_t>(GenSub_ResourceHeader));
+                    if (!hChunk)
+                        continue;
+
+                    CMChunkResourceHeader hdr(*hChunk);
+                    std::string resName = hdr.GetName();
+                    if (resName.empty())
+                        resName = "(unnamed)";
+
+                    if (g.isTexture)
+                    {
+                        const size_t texIdx = gTextureHeaders.size();
+                        gTextureHeaders.push_back(hdr);
+                        InsertTreeText(groupItem, Widen(resName), kTreeTexFlag | static_cast<LPARAM>(texIdx), false);
+                    }
+                    else
+                    {
+                        const size_t idx = gChunkIndex.size();
+                        gChunkIndex.push_back(res);
+                        InsertTreeText(groupItem, Widen(resName), static_cast<LPARAM>(idx), false);
+                    }
+                }
+            }
+        }
+
+        for (const CMChunk& root : gPackage->rootChunks)
+        {
+            if (IsLibraryChunk(root.GetMaskedID()))
+                continue;
+            if (root.GetMaskedID() == static_cast<uint32_t>(Root))
+            {
+                for (const CMChunk& child : root.children)
+                {
+                    if (IsLibraryChunk(child.GetMaskedID()))
+                        continue;
+                    InsertChunkItem(TVI_ROOT, child, 0);
+                }
+            }
+            else
+            {
+                InsertChunkItem(TVI_ROOT, root, 0);
+            }
+        }
+
+        HTREEITEM root = TreeView_GetRoot(gTree);
+        while (root)
+        {
+            TreeView_Expand(gTree, root, TVE_EXPAND);
+            root = TreeView_GetNextSibling(gTree, root);
+        }
+
+        wchar_t status[256];
+        swprintf_s(status, L"Simple view — %zu library group(s), %zu texture(s)%s",
+            groups.size(), gTextureHeaders.size(),
+            gPackage->wasCompressed ? L" (was compressed)" : L"");
+        SetStatus(status);
+    }
+
+    void RebuildTreeDetailed()
+    {
         for (const CMChunk& root : gPackage->rootChunks)
             InsertChunkItem(TVI_ROOT, root, 0);
 
@@ -544,6 +888,24 @@ namespace
             gPackage->rootChunks.size(),
             gPackage->wasCompressed ? L" (was compressed)" : L"");
         SetStatus(status);
+    }
+
+    void RebuildTree()
+    {
+        if (!gTree)
+            return;
+        TreeView_DeleteAllItems(gTree);
+        gChunkIndex.clear();
+        gTextureHeaders.clear();
+        ClearList();
+        ClearPreview();
+        if (!gPackage)
+            return;
+
+        if (gSimpleView)
+            RebuildTreeSimple();
+        else
+            RebuildTreeDetailed();
     }
 
     bool LoadSchemaFromPath(const std::wstring& path)
@@ -582,15 +944,19 @@ namespace
         return false;
     }
 
-    bool LoadPackageFromPath(const std::wstring& path)
+    bool LoadPackageFromPath(const std::wstring& path, bool isLittleEndian)
     {
         ProgressState* prog = BeginProgress(L"Opening package");
+        const wchar_t* stage = L"Reading file";
         SetProgress(prog, 10, L"Reading file...");
         try
         {
             auto pkg = std::make_unique<PKPackage>();
+            pkg->isLittleEndian = isLittleEndian;
+            stage = L"Parsing package";
             SetProgress(prog, 40, L"Parsing package...");
             pkg->ReadFromFile(Narrow(path));
+            stage = L"Building tree";
             SetProgress(prog, 80, L"Building tree...");
             gPackage = std::move(pkg);
             gPackagePath = path;
@@ -603,7 +969,17 @@ namespace
         catch (const std::exception& ex)
         {
             EndProgress(prog);
-            MessageBoxW(gMain, Widen(ex.what()).c_str(), L"Failed to open package, probably from a different game?", MB_ICONERROR | MB_OK);
+            std::wstring msg = L"Failed while " + std::wstring(stage) + L".\n\nFile:\n" + path +
+                L"\n\nError:\n" + Widen(ex.what());
+            MessageBoxW(gMain, msg.c_str(), L"Failed to open package", MB_ICONERROR | MB_OK);
+            return false;
+        }
+        catch (...)
+        {
+            EndProgress(prog);
+            std::wstring msg = L"Failed while " + std::wstring(stage) + L".\n\nFile:\n" + path +
+                L"\n\nError:\nUnknown exception (non-std::exception).";
+            MessageBoxW(gMain, msg.c_str(), L"Failed to open package", MB_ICONERROR | MB_OK);
             return false;
         }
     }
@@ -641,8 +1017,29 @@ namespace
         gSplitX = split;
 
         const int gap = 4;
-        MoveWindow(gTree, 0, 0, split, cy - statusH, TRUE);
-        MoveWindow(gList, split + gap, 0, cx - split - gap, cy - statusH, TRUE);
+        const int rightX = split + gap;
+        const int rightW = cx - split - gap;
+        const int bodyH = cy - statusH;
+
+        MoveWindow(gTree, 0, 0, split, bodyH, TRUE);
+
+        const bool showPreview = gPreview && gPreviewBmp && IsWindowVisible(gPreview);
+        if (showPreview)
+        {
+            int listH = bodyH * 2 / 5;
+            if (listH < 80)
+                listH = 80;
+            if (listH > bodyH - 80)
+                listH = bodyH - 80;
+            MoveWindow(gList, rightX, 0, rightW, listH, TRUE);
+            MoveWindow(gPreview, rightX, listH + gap, rightW, bodyH - listH - gap, TRUE);
+        }
+        else
+        {
+            MoveWindow(gList, rightX, 0, rightW, bodyH, TRUE);
+            if (gPreview)
+                MoveWindow(gPreview, rightX, bodyH, rightW, 0, TRUE);
+        }
         MoveWindow(gStatus, 0, cy - statusH, cx, statusH, TRUE);
     }
 
@@ -678,6 +1075,8 @@ namespace
             HMENU view = CreatePopupMenu();
             AppendMenuW(view, MF_STRING, IDM_VIEW_EXPAND, L"&Expand all");
             AppendMenuW(view, MF_STRING, IDM_VIEW_COLLAPSE, L"&Collapse all");
+            AppendMenuW(view, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(view, MF_STRING, IDM_VIEW_SIMPLE, L"&Simple view");
             AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(view), L"&View");
             SetMenu(hwnd, menu);
 
@@ -712,9 +1111,15 @@ namespace
             col.iSubItem = 3;
             ListView_InsertColumn(gList, 3, &col);
 
+            gPreview = CreateWindowExW(WS_EX_CLIENTEDGE, L"STATIC", L"",
+                WS_CHILD | SS_BITMAP | SS_CENTERIMAGE | SS_REALSIZECONTROL,
+                0, 0, 100, 100, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_PREVIEW)), gInst,
+                nullptr);
+            ShowWindow(gPreview, SW_HIDE);
+
             gStatus = CreateWindowExW(0, STATUSCLASSNAMEW, L"", WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP, 0, 0, 0, 0, hwnd,
                 reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_STATUS)), gInst, nullptr);
-            SetStatus(L"Open a .pkz / .pak file. Schema defaults to EOT-360 if found.");
+            SetStatus(L"Open a .pkz / .pak file. Schema defaults to EOT-360 if found. View → Simple view for resource browser.");
             return 0;
         }
         case WM_SIZE:
@@ -776,9 +1181,29 @@ namespace
             if (hdr->idFrom == IDC_TREE && hdr->code == TVN_SELCHANGEDW)
             {
                 const NMTREEVIEWW* ntv = reinterpret_cast<NMTREEVIEWW*>(lParam);
-                const size_t idx = static_cast<size_t>(ntv->itemNew.lParam);
-                if (idx < gChunkIndex.size())
-                    ShowChunkFields(gChunkIndex[idx]);
+                const LPARAM lp = ntv->itemNew.lParam;
+                if (lp == static_cast<LPARAM>(-1))
+                {
+                    ClearList();
+                    ClearPreview();
+                    SetStatus(L"Library group — expand and select a resource.");
+                }
+                else if (lp & kTreeTexFlag)
+                {
+                    const size_t texIdx = static_cast<size_t>(lp & ~kTreeTexFlag);
+                    ShowTextureResource(texIdx);
+                }
+                else
+                {
+                    const size_t idx = static_cast<size_t>(lp);
+                    if (idx < gChunkIndex.size())
+                        ShowChunkFields(gChunkIndex[idx]);
+                    else
+                    {
+                        ClearList();
+                        ClearPreview();
+                    }
+                }
                 return 0;
             }
             break;
@@ -792,7 +1217,7 @@ namespace
                 const std::wstring path = OpenFileDialog(
                     L"Package files (*.pkz;*.pak)\0*.pkz;*.pak\0All files (*.*)\0*.*\0", L"Open PKZ / PAK");
                 if (!path.empty())
-                    LoadPackageFromPath(path);
+                    LoadPackageFromPath(path, false);
                 return 0;
             }
             case IDM_FILE_SCHEMA:
@@ -826,6 +1251,19 @@ namespace
                 }
                 return 0;
             }
+            case IDM_VIEW_SIMPLE:
+            {
+                gSimpleView = !gSimpleView;
+                HMENU menu = GetMenu(hwnd);
+                if (menu)
+                {
+                    HMENU view = GetSubMenu(menu, 1);
+                    if (view)
+                        CheckMenuItem(view, IDM_VIEW_SIMPLE, MF_BYCOMMAND | (gSimpleView ? MF_CHECKED : MF_UNCHECKED));
+                }
+                RebuildTree();
+                return 0;
+            }
             }
             break;
         }
@@ -839,6 +1277,7 @@ namespace
             break;
         }
         case WM_DESTROY:
+            ClearPreview();
             PostQuitMessage(0);
             return 0;
         }
@@ -907,7 +1346,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     }
 
     if (!packageArg.empty())
-        LoadPackageFromPath(packageArg);
+        LoadPackageFromPath(packageArg, false);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0)
