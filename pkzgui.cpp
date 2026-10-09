@@ -1726,11 +1726,10 @@ namespace
             std::vector<uint8_t> file((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
             const BUPng::Image img = BUPng::Decode(file.data(), file.size());
             RZTexture original = RZTexture::Load(*gPackage, hdr);
-            const XenosTexture::D3DFormat fmt = original.desc.Format();
 
             wchar_t wbuf[32], hbuf[32];
-            swprintf_s(wbuf, L"%u", img.width);
-            swprintf_s(hbuf, L"%u", img.height);
+            swprintf_s(wbuf, L"%u", original.desc.width);
+            swprintf_s(hbuf, L"%u", original.desc.height);
             static bool sOk = false;
             static wchar_t* sW = nullptr;
             static wchar_t* sH = nullptr;
@@ -1817,37 +1816,10 @@ namespace
                 rgba = ResizeRGBA(img.rgba.data(), static_cast<int>(img.width), static_cast<int>(img.height),
                     static_cast<int>(dw), static_cast<int>(dh));
 
-            const std::vector<uint8_t> linear = EncodeLinearInFormat(rgba.data(), dw, dh, fmt);
-            std::vector<uint8_t> tiled = XenosTexture::Tile(linear.data(), dw, dh, fmt);
-            const size_t padded = (tiled.size() + 0x3FFF) & ~size_t(0x3FFF);
-            tiled.resize(padded, 0);
-
-            RZTexture::Descriptor desc = original.desc;
-            desc.width = dw;
-            desc.height = dh;
-            desc.mipLevels = 1;
-            desc.mipChainOffset = 0xFFFFFFFFu;
-
-            CMChunk rebuilt = CMChunk::Leaf(static_cast<uint32_t>(Texture_Data), gActiveTextureData->GetVersion(),
-                {}, gActiveTextureData->HasWideLength());
-            rebuilt.isLittleEndian = gActiveTextureData->isLittleEndian;
-            desc.Write(rebuilt);
-            rebuilt.AppendBytes(tiled.data(), tiled.size());
-            gActiveTextureData->SetData(rebuilt.data);
-
-            if (gActiveTextureHeaderChunk && !gActiveTextureHeaderChunk->data.empty())
-            {
-                const uint32_t crc = BUCRC().GenerateRaw(tiled.data(), tiled.size());
-                CMChunkResourceHeader parsed(*gActiveTextureHeaderChunk);
-                CMChunk nh = CMChunkResourceHeader::Build(
-                    parsed.GetCRC(), parsed.GetRawResourceType(), parsed.GetLanguageMask(),
-                    parsed.GetQualityLevel(), parsed.GetDataOffset(), crc, parsed.GetName(),
-                    gActiveTextureHeaderChunk->isLittleEndian, parsed.bWideOffset,
-                    gActiveTextureHeaderChunk->GetVersion());
-                gActiveTextureHeaderChunk->SetData(nh.data);
-                gTextureHeaders[static_cast<size_t>(gSelectedTexIdx)] =
-                    CMChunkResourceHeader(*gActiveTextureHeaderChunk);
-            }
+            original.Reencode(rgba.data(), dw, dh);
+            original.Store(*gPackage);
+            if (gActiveTextureHeaderChunk)
+                gTextureHeaders[static_cast<size_t>(gSelectedTexIdx)] = CMChunkResourceHeader(*gActiveTextureHeaderChunk);
 
             for (CMChunk& root : gPackage->rootChunks)
                 root.ComputeLength();

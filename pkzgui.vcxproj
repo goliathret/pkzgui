@@ -147,6 +147,16 @@
   <ItemGroup>
     <ClCompile Include="pkzgui.cpp" />
   </ItemGroup>
+  <PropertyGroup>
+    <PkzlibDir>$(MSBuildThisFileDirectory)external\PKZLib\</PkzlibDir>
+    <PkzlibTextures>$(PkzlibDir)thirdparty\textures\</PkzlibTextures>
+  </PropertyGroup>
+  <ItemGroup>
+    <ClCompile Include="$(PkzlibDir)Graphics\XenosTexture.cpp;$(PkzlibDir)BaseUtils\BUPng.cpp;$(PkzlibTextures)rexglue\src\graphics\pipeline\texture\util.cpp;$(PkzlibTextures)rexglue\src\graphics\pipeline\texture\info_formats.cpp;$(PkzlibTextures)rexglue\src\core\math_msvc.cpp;$(PkzlibTextures)libsquish\lib\src\alpha.cpp;$(PkzlibTextures)libsquish\lib\src\clusterfit.cpp;$(PkzlibTextures)libsquish\lib\src\colourblock.cpp;$(PkzlibTextures)libsquish\lib\src\colourfit.cpp;$(PkzlibTextures)libsquish\lib\src\colourset.cpp;$(PkzlibTextures)libsquish\lib\src\maths.cpp;$(PkzlibTextures)libsquish\lib\src\rangefit.cpp;$(PkzlibTextures)libsquish\lib\src\singlecolourfit.cpp;$(PkzlibTextures)libsquish\lib\src\squish.cpp">
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <AdditionalIncludeDirectories>$(PkzlibTextures)rexglue\shim;$(PkzlibTextures)rexglue\include;$(PkzlibTextures)libsquish\lib\include;$(PkzlibTextures)squish_export;$(PkzlibTextures)stb;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+    </ClCompile>
+  </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pkzgui_schema.h" />
   </ItemGroup>
