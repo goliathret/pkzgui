@@ -402,6 +402,16 @@ void ModelRenderer::ReleaseFramebuffer()
         gl3::DeleteFramebuffers(1, &msaaFramebuffer);
     if (framebuffer)
         gl3::DeleteFramebuffers(1, &framebuffer);
+    // grid
+    if (gridProgram)
+        gl3::DeleteProgram(gridProgram);
+    if (gridVAO)
+        gl3::DeleteVertexArrays(1, &gridVAO);
+    if (gridVBO)
+        gl3::DeleteBuffers(1, &gridVBO);
+
+    gridProgram = gridVAO = gridVBO = 0;
+    gridVertexCount = 0;
 
     colorTexture = msaaColorBuffer = msaaDepthBuffer = 0;
     msaaFramebuffer = framebuffer = 0;
