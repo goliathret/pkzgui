@@ -87,6 +87,7 @@ private:
 
     void EnsureProgram();
     void EnsureFramebuffer(int width, int height);
+    void EnsureGrid();
     void EnsureWhiteTexture();
     void UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes);
     void ReleaseFramebuffer();
@@ -106,4 +107,9 @@ private:
     unsigned int msaaColorBuffer = 0;
     unsigned int msaaDepthBuffer = 0;
     int msaaSamples = 4;
+
+    unsigned int gridProgram = 0;
+    unsigned int gridVAO = 0;
+    unsigned int gridVBO = 0;
+    int gridVertexCount = 0;
 };
