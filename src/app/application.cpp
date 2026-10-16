@@ -117,7 +117,7 @@ bool Application::Initialize()
 bool Application::CreateMainWindow()
 {
     ApplyOpenGLContextHints();
-    window = glfwCreateWindow(kInitialWidth, kInitialHeight, "pkzgui", nullptr, nullptr);
+    window = glfwCreateWindow(kInitialWidth, kInitialHeight, "Goliath Studio X", nullptr, nullptr);
     if (!window)
         return false;
     glfwSetWindowSizeLimits(window, kMinimumWidth, kMinimumHeight, GLFW_DONT_CARE, GLFW_DONT_CARE);
