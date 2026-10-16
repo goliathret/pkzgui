@@ -82,7 +82,7 @@ private:
     OrbitCamera camera;
     int selectedMaterial = 0;
     float uvDivisor = 1024.0f;
-    bool textured = false;
+    bool textured = true; // SHOW TEXTURES BY DEFAULT!! this was driving me crazy :(
     bool twoSided = true;
     bool overlayCollapsed = false;
     bool renderDirty = true;
