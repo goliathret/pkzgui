@@ -65,6 +65,22 @@ void main() {
 }
 )";
 
+    const char* const kGridVertexShader = R"(
+in vec3 aPos;
+uniform mat4 uMVP;
+void main() {
+    gl_Position = uMVP * vec4(aPos, 1.0);
+}
+)";
+
+    const char* const kGridFragmentShader = R"(
+uniform vec3 uColor;
+out vec4 fragColor;
+void main() {
+    fragColor = vec4(uColor, 1.0);
+}
+)";
+
     GLuint BuildShader(GLenum type, const char* body)
     {
         const char* sources[] = {kGlslVersion, "\n", body};
@@ -106,6 +122,50 @@ ModelRenderer::~ModelRenderer()
     Release();
 }
 
+void ModelRenderer::EnsureGrid()
+{
+    if (gridVAO)
+        return;
+
+    // Create program
+    const GLuint vs = BuildShader(GL_VERTEX_SHADER, kGridVertexShader);
+    const GLuint fs = BuildShader(GL_FRAGMENT_SHADER, kGridFragmentShader);
+    gridProgram = gl3::CreateProgram();
+    gl3::AttachShader(gridProgram, vs);
+    gl3::AttachShader(gridProgram, fs);
+    gl3::BindAttribLocation(gridProgram, 0, "aPos");
+    gl3::LinkProgram(gridProgram);
+    gl3::DeleteShader(vs);
+    gl3::DeleteShader(fs);
+
+    // Generate grid lines (XZ plane, Y = 0)
+    const int halfSize = 10;          // 20 x 20 units
+    const float step = 1.0f;
+    std::vector<float> vertices;
+
+    for (int i = -halfSize; i <= halfSize; ++i)
+    {
+        float t = i * step;
+
+        // line parallel to X
+        vertices.push_back(-halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
+        vertices.push_back( halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
+
+        // line parallel to Z
+        vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back(-halfSize * step);
+        vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back( halfSize * step);
+    }
+
+    gridVertexCount = static_cast<int>(vertices.size() / 3);
+
+    gl3::GenVertexArrays(1, &gridVAO);
+    gl3::BindVertexArray(gridVAO);
+    gridVBO = UploadBuffer(GL_ARRAY_BUFFER, vertices.data(), vertices.size() * sizeof(float));
+    gl3::EnableVertexAttribArray(0);
+    gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+    gl3::BindVertexArray(0);
+}
+
 void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const std::vector<MeshStyle>& styles,
     const OrbitCamera& camera, bool twoSided, int width, int height)
 {
@@ -140,6 +200,16 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
     const Mat4 projection = Mat4::Perspective(kFieldOfView, float(width) / float(height), kNearPlane,
         camera.distance * 20.0f + 10.0f);
     const Mat4 modelViewProjection = projection * (view * model);
+
+    EnsureGrid();
+
+    gl3::UseProgram(gridProgram);
+    gl3::UniformMatrix4fv(gl3::GetUniformLocation(gridProgram, "uMVP"), 1, GL_FALSE, modelViewProjection.m);
+    gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 0.35f, 0.37f, 0.40f);
+
+    gl3::BindVertexArray(gridVAO);
+    glDrawArrays(GL_LINES, 0, gridVertexCount);
+    gl3::BindVertexArray(0);
 
     gl3::UseProgram(program);
     gl3::UniformMatrix4fv(Uniform("uMVP"), 1, GL_FALSE, modelViewProjection.m);
