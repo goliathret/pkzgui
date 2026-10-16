@@ -146,7 +146,9 @@ namespace gl3
     X(void, BindRenderbuffer, (GLenum, GLuint)) \
     X(void, DeleteRenderbuffers, (GLsizei, const GLuint*)) \
     X(void, RenderbufferStorage, (GLenum, GLenum, GLsizei, GLsizei)) \
-    X(void, FramebufferRenderbuffer, (GLenum, GLenum, GLenum, GLuint))
+    X(void, FramebufferRenderbuffer, (GLenum, GLenum, GLenum, GLuint)) \
+    X(void, RenderbufferStorageMultisample, (GLenum, GLsizei, GLenum, GLsizei, GLsizei)) \
+    X(void, BlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum))
 
 #define PKZGUI_GL3_DECLARE(ret, name, args) extern ret(*name) args;
     PKZGUI_GL3_FUNCTIONS(PKZGUI_GL3_DECLARE)

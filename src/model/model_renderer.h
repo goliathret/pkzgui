@@ -101,4 +101,9 @@ private:
     int frameWidth = 0;
     int frameHeight = 0;
     size_t textureBytes = 0;
+
+    unsigned int msaaFramebuffer = 0;
+    unsigned int msaaColorBuffer = 0;
+    unsigned int msaaDepthBuffer = 0;
+    int msaaSamples = 4;
 };
