@@ -235,6 +235,10 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
         if (meshes[i].indices.empty())
             continue;
         const MeshStyle& style = styles[i];
+
+        if (style.texture == 0 && !drawNoTex)
+            continue;
+
         gl3::Uniform1f(Uniform("uUVDivisor"), style.uvDivisor);
         gl3::Uniform1i(Uniform("uTextured"), style.texture != 0);
         gl3::Uniform1i(Uniform("uAlphaCutout"), style.alphaCutout);

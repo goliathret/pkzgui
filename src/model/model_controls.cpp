@@ -182,6 +182,8 @@ void ModelPreview::DrawOverlayControls(bool collapsed, bool insidePopup)
     if (ImGui::DragFloat("UV divisor", &uvDivisor, 1, 1, 65536, "%.0f", ImGuiSliderFlags_AlwaysClamp))
         renderDirty = true;
     ImGui::SetItemTooltip("Integer UV coordinates only. OfficeSuit uses 1024; animated UV transforms are not emulated.");
+    if (ImGui::Checkbox("Draw Mats w/ No Tex", &renderer.drawNoTex))
+        renderDirty = true;
     ImGui::EndPopup();
 }
 

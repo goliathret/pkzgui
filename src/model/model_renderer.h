@@ -61,6 +61,8 @@ public:
         bool alphaCutout = false;
     };
 
+    bool drawNoTex = false;
+
     ModelRenderer() = default;
     ~ModelRenderer();
     ModelRenderer(const ModelRenderer&) = delete;

@@ -1,4 +1,4 @@
-#include "model/model_preview.h"
+﻿#include "model/model_preview.h"
 #include "platform/platform.h"
 #include "texture/texture.h"
 #include "ui/widgets.h"
