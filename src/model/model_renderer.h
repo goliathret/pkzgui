@@ -56,7 +56,7 @@ public:
     struct MeshStyle
     {
         unsigned int texture = 0;
-        float color[3] = {1.0f, 1.0f, 1.0f};
+        float color[3] = { 1.0f, 1.0f, 1.0f };
         float uvDivisor = 1.0f;
         bool alphaCutout = false;
     };
@@ -70,6 +70,8 @@ public:
 
     void Render(const std::vector<RZGeometry::Mesh>& meshes, const std::vector<MeshStyle>& styles,
         const OrbitCamera& camera, bool twoSided, int width, int height);
+    void RenderSkeleton(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents,
+        const OrbitCamera& camera, int width, int height);
     Texture UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, bool clampToEdge = false);
     void DeleteTexture(Texture& texture);
     void Release();
@@ -91,6 +93,7 @@ private:
     void EnsureFramebuffer(int width, int height);
     void EnsureGrid();
     void EnsureWhiteTexture();
+    void EnsureSkeleton();
     void UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes);
     void ReleaseFramebuffer();
     void ReleaseMultisampleFramebuffer();
@@ -115,4 +118,11 @@ private:
     unsigned int gridVAO = 0;
     unsigned int gridVBO = 0;
     int gridVertexCount = 0;
+
+    // fyi, i dont know if ill keep the line drawing
+    // for skeletons, might go for a blender bone approach?
+    unsigned int skeletonLineVAO = 0;
+    unsigned int skeletonLineVBO = 0;
+    unsigned int skeletonJointVAO = 0;
+    unsigned int skeletonJointVBO = 0;
 };

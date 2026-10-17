@@ -8,8 +8,8 @@ namespace
 {
     constexpr float kFieldOfView = 0.785398f;
     constexpr float kNearPlane = 0.05f;
-    constexpr float kClearColor[4] = {0.18f, 0.19f, 0.22f, 1.0f};
-    constexpr float kLightDirection[3] = {0.4f, -0.8f, 0.3f};
+    constexpr float kClearColor[4] = { 0.18f, 0.19f, 0.22f, 1.0f };
+    constexpr float kLightDirection[3] = { 0.4f, -0.8f, 0.3f };
 
     enum Attribute : GLuint
     {
@@ -83,7 +83,7 @@ void main() {
 
     GLuint BuildShader(GLenum type, const char* body)
     {
-        const char* sources[] = {kGlslVersion, "\n", body};
+        const char* sources[] = { kGlslVersion, "\n", body };
         const GLuint shader = gl3::CreateShader(type);
         gl3::ShaderSource(shader, 3, sources, nullptr);
         gl3::CompileShader(shader);
@@ -161,11 +161,11 @@ void ModelRenderer::EnsureGrid()
 
         // line parallel to X
         vertices.push_back(-halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
-        vertices.push_back( halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
+        vertices.push_back(halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
 
         // line parallel to Z
         vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back(-halfSize * step);
-        vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back( halfSize * step);
+        vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back(halfSize * step);
     }
 
     gridVertexCount = static_cast<int>(vertices.size() / 3);
@@ -257,6 +257,122 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
     }
 }
 
+void ModelRenderer::EnsureSkeleton()
+{
+    if (skeletonLineVAO)
+        return;
+    gl3::GenVertexArrays(1, &skeletonLineVAO);
+    gl3::GenBuffers(1, &skeletonLineVBO);
+    gl3::GenVertexArrays(1, &skeletonJointVAO);
+    gl3::GenBuffers(1, &skeletonJointVBO);
+}
+
+void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents,
+    const OrbitCamera& camera, int width, int height)
+{
+    const GLStateGuard savedState;
+    EnsureFramebuffer(width, height);
+    EnsureGrid();
+    EnsureSkeleton();
+
+    gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer ? msaaFramebuffer : framebuffer);
+    glViewport(0, 0, width, height);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_BLEND);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glDepthMask(GL_TRUE);
+    glClearColor(kClearColor[0], kClearColor[1], kClearColor[2], kClearColor[3]);
+    glClearDepth(1.0);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_CULL_FACE);
+
+    const BUVector3 eye = camera.Eye();
+    const Mat4 model;
+    const Mat4 view = Mat4::LookAt(eye, camera.target, BUVector3(0.0f, 1.0f, 0.0f));
+    const Mat4 projection = Mat4::Perspective(kFieldOfView, float(width) / float(height), kNearPlane,
+        camera.distance * 20.0f + 10.0f);
+    const Mat4 modelViewProjection = projection * (view * model);
+
+    gl3::UseProgram(gridProgram);
+    gl3::UniformMatrix4fv(gl3::GetUniformLocation(gridProgram, "uMVP"), 1, GL_FALSE, modelViewProjection.m);
+    gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 0.35f, 0.37f, 0.40f);
+    gl3::BindVertexArray(gridVAO);
+    glDrawArrays(GL_LINES, 0, gridVertexCount);
+    gl3::BindVertexArray(0);
+
+    std::vector<float> lineVerts;
+    lineVerts.reserve(positions.size() * 6);
+    for (size_t i = 0; i < positions.size() && i < parents.size(); ++i)
+    {
+        const uint32_t parent = parents[i];
+        if (parent >= positions.size())
+            continue;
+        const BUVector3& a = positions[i];
+        const BUVector3& b = positions[parent];
+        lineVerts.push_back(a.x);
+        lineVerts.push_back(a.y);
+        lineVerts.push_back(a.z);
+        lineVerts.push_back(b.x);
+        lineVerts.push_back(b.y);
+        lineVerts.push_back(b.z);
+    }
+
+    if (!lineVerts.empty())
+    {
+        gl3::BindVertexArray(skeletonLineVAO);
+        gl3::BindBuffer(GL_ARRAY_BUFFER, skeletonLineVBO);
+        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<gl3::SizeIPtr>(lineVerts.size() * sizeof(float)), lineVerts.data(),
+            GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(0);
+        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 1.0f, 0.15f, 0.15f);
+        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(lineVerts.size() / 3));
+        gl3::BindVertexArray(0);
+    }
+
+    const float half = std::max(0.01f, camera.distance * 0.008f);
+    std::vector<float> jointVerts;
+    jointVerts.reserve(positions.size() * 18);
+    for (const BUVector3& p : positions)
+    {
+        const float x0 = p.x - half;
+        const float x1 = p.x + half;
+        const float y0 = p.y - half;
+        const float y1 = p.y + half;
+        const float z = p.z;
+        jointVerts.push_back(x0); jointVerts.push_back(y0); jointVerts.push_back(z);
+        jointVerts.push_back(x1); jointVerts.push_back(y0); jointVerts.push_back(z);
+        jointVerts.push_back(x1); jointVerts.push_back(y1); jointVerts.push_back(z);
+        jointVerts.push_back(x0); jointVerts.push_back(y0); jointVerts.push_back(z);
+        jointVerts.push_back(x1); jointVerts.push_back(y1); jointVerts.push_back(z);
+        jointVerts.push_back(x0); jointVerts.push_back(y1); jointVerts.push_back(z);
+    }
+
+    if (!jointVerts.empty())
+    {
+        gl3::BindVertexArray(skeletonJointVAO);
+        gl3::BindBuffer(GL_ARRAY_BUFFER, skeletonJointVBO);
+        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<gl3::SizeIPtr>(jointVerts.size() * sizeof(float)), jointVerts.data(),
+            GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(0);
+        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 1.0f, 1.0f, 1.0f);
+        glDisable(GL_DEPTH_TEST);
+        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(jointVerts.size() / 3));
+        glEnable(GL_DEPTH_TEST);
+        gl3::BindVertexArray(0);
+    }
+
+    if (msaaFramebuffer)
+    {
+        gl3::BindFramebuffer(GL_READ_FRAMEBUFFER, msaaFramebuffer);
+        gl3::BindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+        gl3::BlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+}
+
 ModelRenderer::Texture ModelRenderer::UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height,
     bool clampToEdge)
 {
@@ -268,7 +384,7 @@ ModelRenderer::Texture ModelRenderer::UploadTexture(const std::vector<uint8_t>& 
     const GLuint id = CreateRgbaTexture(rgba.data(), GLsizei(width), GLsizei(height),
         clampToEdge ? GL_CLAMP_TO_EDGE : GL_REPEAT);
     textureBytes += bytes;
-    return {id, bytes};
+    return { id, bytes };
 }
 
 void ModelRenderer::DeleteTexture(Texture& texture)
@@ -286,7 +402,7 @@ void ModelRenderer::Release()
         for (const GpuMesh& mesh : gpuMeshes)
         {
             gl3::DeleteVertexArrays(1, &mesh.vertexArray);
-            const GLuint buffers[] = {mesh.positions, mesh.normals, mesh.texcoords, mesh.indices};
+            const GLuint buffers[] = { mesh.positions, mesh.normals, mesh.texcoords, mesh.indices };
             gl3::DeleteBuffers(4, buffers);
         }
         if (whiteTexture)
@@ -300,6 +416,14 @@ void ModelRenderer::Release()
             gl3::DeleteVertexArrays(1, &gridVAO);
         if (gridVBO)
             gl3::DeleteBuffers(1, &gridVBO);
+        if (skeletonLineVAO)
+            gl3::DeleteVertexArrays(1, &skeletonLineVAO);
+        if (skeletonLineVBO)
+            gl3::DeleteBuffers(1, &skeletonLineVBO);
+        if (skeletonJointVAO)
+            gl3::DeleteVertexArrays(1, &skeletonJointVAO);
+        if (skeletonJointVBO)
+            gl3::DeleteBuffers(1, &skeletonJointVBO);
     }
     gpuMeshes.clear();
     whiteTexture = 0;
@@ -308,6 +432,7 @@ void ModelRenderer::Release()
     program = 0;
     gridProgram = gridVAO = gridVBO = 0;
     gridVertexCount = 0;
+    skeletonLineVAO = skeletonLineVBO = skeletonJointVAO = skeletonJointVBO = 0;
     textureBytes = 0;
 }
 
@@ -414,7 +539,7 @@ void ModelRenderer::EnsureWhiteTexture()
 {
     if (whiteTexture)
         return;
-    const unsigned char white[4] = {255, 255, 255, 255};
+    const unsigned char white[4] = { 255, 255, 255, 255 };
     whiteTexture = CreateRgbaTexture(white, 1, 1, GL_REPEAT);
 }
 
