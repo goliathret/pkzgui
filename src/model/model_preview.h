@@ -56,6 +56,7 @@ private:
     };
 
     void Load(const PKPackage& package, const CMChunkResourceHeader& resource);
+    void LoadHierarchy(const PKPackage& package, const CMChunkResourceHeader& resource, const CMChunk* selected);
     void HandleCameraInput(bool blocked);
     void RenderFrame(int width, int height);
     std::vector<ModelRenderer::MeshStyle> MeshStyles();
@@ -77,6 +78,11 @@ private:
     std::vector<MaterialState> materials;
     size_t vertexCount = 0;
     size_t triangleCount = 0;
+
+    bool isHierarchy = false;
+    std::vector<BUVector3> bonePositions;
+    std::vector<uint32_t> boneParents;
+    size_t boneCount = 0;
 
     ModelRenderer renderer;
     OrbitCamera camera;

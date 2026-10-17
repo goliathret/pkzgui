@@ -124,7 +124,7 @@ void Workspace::DrawResourcePanel()
     else if (audio)
         Execute(DrawAudioPreview(*audio, player));
     else
-        ImGui::TextDisabled("Select a texture, geometry model, or audio sample.");
+        ImGui::TextDisabled("Select a texture, geometry model, hierarchy, or audio sample.");
     ImGui::EndChild();
 }
 
