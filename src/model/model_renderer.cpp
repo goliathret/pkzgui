@@ -8,8 +8,8 @@ namespace
 {
     constexpr float kFieldOfView = 0.785398f;
     constexpr float kNearPlane = 0.05f;
-    constexpr float kClearColor[4] = { 0.18f, 0.19f, 0.22f, 1.0f };
-    constexpr float kLightDirection[3] = { 0.4f, -0.8f, 0.3f };
+    constexpr float kClearColor[4] = {0.18f, 0.19f, 0.22f, 1.0f};
+    constexpr float kLightDirection[3] = {0.4f, -0.8f, 0.3f};
 
     enum Attribute : GLuint
     {
@@ -83,7 +83,7 @@ void main() {
 
     GLuint BuildShader(GLenum type, const char* body)
     {
-        const char* sources[] = { kGlslVersion, "\n", body };
+        const char* sources[] = {kGlslVersion, "\n", body};
         const GLuint shader = gl3::CreateShader(type);
         gl3::ShaderSource(shader, 3, sources, nullptr);
         gl3::CompileShader(shader);
@@ -161,11 +161,11 @@ void ModelRenderer::EnsureGrid()
 
         // line parallel to X
         vertices.push_back(-halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
-        vertices.push_back(halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
+        vertices.push_back( halfSize * step); vertices.push_back(0.0f); vertices.push_back(t);
 
         // line parallel to Z
         vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back(-halfSize * step);
-        vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back(halfSize * step);
+        vertices.push_back(t); vertices.push_back(0.0f); vertices.push_back( halfSize * step);
     }
 
     gridVertexCount = static_cast<int>(vertices.size() / 3);
@@ -332,22 +332,30 @@ void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, cons
         gl3::BindVertexArray(0);
     }
 
+    BUVector3 forward = camera.target - eye;
+    forward.Normalize();
+    BUVector3 right = forward.Cross(BUVector3(0.0f, 1.0f, 0.0f));
+    if (right.Length() < 1e-4f)
+        right = forward.Cross(BUVector3(0.0f, 0.0f, 1.0f));
+    right.Normalize();
+    BUVector3 up = right.Cross(forward);
+    up.Normalize();
+
     const float half = std::max(0.01f, camera.distance * 0.008f);
     std::vector<float> jointVerts;
     jointVerts.reserve(positions.size() * 18);
     for (const BUVector3& p : positions)
     {
-        const float x0 = p.x - half;
-        const float x1 = p.x + half;
-        const float y0 = p.y - half;
-        const float y1 = p.y + half;
-        const float z = p.z;
-        jointVerts.push_back(x0); jointVerts.push_back(y0); jointVerts.push_back(z);
-        jointVerts.push_back(x1); jointVerts.push_back(y0); jointVerts.push_back(z);
-        jointVerts.push_back(x1); jointVerts.push_back(y1); jointVerts.push_back(z);
-        jointVerts.push_back(x0); jointVerts.push_back(y0); jointVerts.push_back(z);
-        jointVerts.push_back(x1); jointVerts.push_back(y1); jointVerts.push_back(z);
-        jointVerts.push_back(x0); jointVerts.push_back(y1); jointVerts.push_back(z);
+        const BUVector3 c0 = p + (right * -half) + (up * -half);
+        const BUVector3 c1 = p + (right * half) + (up * -half);
+        const BUVector3 c2 = p + (right * half) + (up * half);
+        const BUVector3 c3 = p + (right * -half) + (up * half);
+        jointVerts.push_back(c0.x); jointVerts.push_back(c0.y); jointVerts.push_back(c0.z);
+        jointVerts.push_back(c1.x); jointVerts.push_back(c1.y); jointVerts.push_back(c1.z);
+        jointVerts.push_back(c2.x); jointVerts.push_back(c2.y); jointVerts.push_back(c2.z);
+        jointVerts.push_back(c0.x); jointVerts.push_back(c0.y); jointVerts.push_back(c0.z);
+        jointVerts.push_back(c2.x); jointVerts.push_back(c2.y); jointVerts.push_back(c2.z);
+        jointVerts.push_back(c3.x); jointVerts.push_back(c3.y); jointVerts.push_back(c3.z);
     }
 
     if (!jointVerts.empty())
@@ -384,7 +392,7 @@ ModelRenderer::Texture ModelRenderer::UploadTexture(const std::vector<uint8_t>& 
     const GLuint id = CreateRgbaTexture(rgba.data(), GLsizei(width), GLsizei(height),
         clampToEdge ? GL_CLAMP_TO_EDGE : GL_REPEAT);
     textureBytes += bytes;
-    return { id, bytes };
+    return {id, bytes};
 }
 
 void ModelRenderer::DeleteTexture(Texture& texture)
@@ -402,7 +410,7 @@ void ModelRenderer::Release()
         for (const GpuMesh& mesh : gpuMeshes)
         {
             gl3::DeleteVertexArrays(1, &mesh.vertexArray);
-            const GLuint buffers[] = { mesh.positions, mesh.normals, mesh.texcoords, mesh.indices };
+            const GLuint buffers[] = {mesh.positions, mesh.normals, mesh.texcoords, mesh.indices};
             gl3::DeleteBuffers(4, buffers);
         }
         if (whiteTexture)
@@ -539,7 +547,7 @@ void ModelRenderer::EnsureWhiteTexture()
 {
     if (whiteTexture)
         return;
-    const unsigned char white[4] = { 255, 255, 255, 255 };
+    const unsigned char white[4] = {255, 255, 255, 255};
     whiteTexture = CreateRgbaTexture(white, 1, 1, GL_REPEAT);
 }
 
