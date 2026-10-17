@@ -492,7 +492,7 @@ namespace
             if (gl.isBuffer(i))
                 buffers.insert(i);
         const unsigned modelFramebuffer = gl.PreviewFramebuffer();
-        Check(buffers.size() == 4 && modelFramebuffer != 0, "Mesh buffers were not retained");
+        Check(buffers.size() == 5 && modelFramebuffer != 0, "Mesh and grid buffers were not retained");
 
         gl.bindFramebuffer(GL_READ_FRAMEBUFFER, modelFramebuffer);
         std::array<unsigned char, 256 * 256 * 4> image{};
@@ -518,10 +518,10 @@ namespace
         ImGui::GetIO().DisplaySize = ImVec2(800, 600);
         gl.Draw(preview);
         for (unsigned id : buffers)
-            Check(gl.isBuffer(id), "Resize reallocated a mesh buffer");
+            Check(gl.isBuffer(id), "Resize reallocated a mesh or grid buffer");
         preview.Clear();
         for (unsigned id : buffers)
-            Check(!gl.isBuffer(id), "Clear leaked a mesh buffer");
+            Check(!gl.isBuffer(id), "Clear leaked a mesh or grid buffer");
     }
 
     void TexturedRenderTests(GLHarness& gl)
@@ -615,6 +615,65 @@ namespace
         std::filesystem::remove_all(dir);
     }
 
+    struct MultisampleSupport
+    {
+        inline static decltype(gl3::CheckFramebufferStatus) original = nullptr;
+        inline static int limit = 0, rejected = 0;
+
+        static GLenum CheckStatus(GLenum target)
+        {
+            GLint samples = 0;
+            glGetIntegerv(0x80A9 /* GL_SAMPLES */, &samples);
+            if (samples > limit)
+            {
+                ++rejected;
+                return 0x8CDD; // GL_FRAMEBUFFER_UNSUPPORTED
+            }
+            return original(target);
+        }
+
+        explicit MultisampleSupport(int maximum)
+        {
+            original = gl3::CheckFramebufferStatus;
+            limit = maximum;
+            rejected = 0;
+            gl3::CheckFramebufferStatus = CheckStatus;
+        }
+        ~MultisampleSupport() { gl3::CheckFramebufferStatus = original; }
+    };
+
+    void MultisampleFallbackTests(GLHarness& gl)
+    {
+        GLint maxSamples = 0;
+        glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+        for (int limit : {2, 0})
+        {
+            const MultisampleSupport support(limit);
+            auto session = TexturedFixture();
+            ModelPreview preview;
+            preview.Update(session);
+            gl.Draw(preview);
+            Check(maxSamples < 2 || maxSamples <= limit || MultisampleSupport::rejected > 0,
+                "MSAA fallback was not exercised");
+            const unsigned framebuffer = gl.PreviewFramebuffer();
+            Check(framebuffer != 0 && gl.CountColor(framebuffer, true) > 100,
+                "MSAA fallback did not render the textured model");
+            if (!limit)
+            {
+                gl.bindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
+                GLint type = 0;
+                Proc<void (*)(unsigned, unsigned, unsigned, int*)>("glGetFramebufferAttachmentParameteriv")(
+                    GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, 0x8CD0 /* GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE */, &type);
+                Check(type == GL_RENDERBUFFER, "Single-sample fallback has no depth buffer");
+                gl.bindFramebuffer(GL_READ_FRAMEBUFFER, gl.callerFramebuffers[1]);
+            }
+            preview.Clear();
+            Check(!gl.isFramebuffer(framebuffer), "Fallback framebuffer leaked");
+            for (unsigned id = 1; id < 64; ++id)
+                Check(!gl.isBuffer(id), "Fallback leaked a mesh or grid buffer");
+        }
+    }
+
     int GLTests()
     {
         if (!glfwInit())
@@ -629,8 +688,9 @@ namespace
                 SetCallerState(gl);
                 UntexturedRenderTests(gl);
                 TexturedRenderTests(gl);
+                MultisampleFallbackTests(gl);
                 std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured "
-                          "rendering, PNG preview/reset/apply and shutdown cleanup");
+                          "rendering, PNG preview/reset/apply, MSAA fallback and shutdown cleanup");
             }
         }
         glfwTerminate();

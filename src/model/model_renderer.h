@@ -91,6 +91,7 @@ private:
     void EnsureWhiteTexture();
     void UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes);
     void ReleaseFramebuffer();
+    void ReleaseMultisampleFramebuffer();
     int Uniform(const char* name) const;
 
     std::vector<GpuMesh> gpuMeshes;
