@@ -91,15 +91,26 @@ Application::Application() = default;
 Application::~Application()
 {
     workspace.reset();
+    menu.Shutdown();
+
+    // shut down while window STILL EXISTS.
     if (imguiRendererReady)
         ImGui_ImplOpenGL3_Shutdown();
     if (imguiPlatformReady)
         ImGui_ImplGlfw_Shutdown();
     if (imguiContextReady)
         ImGui::DestroyContext();
-    menu.Shutdown();
+
+    imguiRendererReady = false;
+    imguiPlatformReady = false;
+    imguiContextReady = false;
+
     if (window)
+    {
         glfwDestroyWindow(window);
+        window = nullptr;
+    }
+
     if (glfwReady)
         glfwTerminate();
 }
