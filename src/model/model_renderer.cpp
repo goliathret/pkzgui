@@ -129,7 +129,9 @@ void ModelRenderer::EnsureGrid()
 
     // Create program
     const GLuint vs = BuildShader(GL_VERTEX_SHADER, kGridVertexShader);
-    const GLuint fs = BuildShader(GL_FRAGMENT_SHADER, kGridFragmentShader);
+    GLuint fs = 0;
+    try { fs = BuildShader(GL_FRAGMENT_SHADER, kGridFragmentShader); }
+    catch (...) { gl3::DeleteShader(vs); throw; }
     gridProgram = gl3::CreateProgram();
     gl3::AttachShader(gridProgram, vs);
     gl3::AttachShader(gridProgram, fs);
@@ -137,6 +139,16 @@ void ModelRenderer::EnsureGrid()
     gl3::LinkProgram(gridProgram);
     gl3::DeleteShader(vs);
     gl3::DeleteShader(fs);
+    GLint linked = 0;
+    gl3::GetProgramiv(gridProgram, GL_LINK_STATUS, &linked);
+    if (!linked)
+    {
+        char log[512]{};
+        gl3::GetProgramInfoLog(gridProgram, sizeof(log), nullptr, log);
+        gl3::DeleteProgram(gridProgram);
+        gridProgram = 0;
+        throw std::runtime_error(std::string("Grid program link: ") + log);
+    }
 
     // Generate grid lines (XZ plane, Y = 0)
     const int halfSize = 10;          // 20 x 20 units
@@ -176,7 +188,7 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
     if (gpuMeshes.empty())
         UploadMeshes(meshes);
 
-    gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer);
+    gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer ? msaaFramebuffer : framebuffer);
     glViewport(0, 0, width, height);
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -232,12 +244,13 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(meshes[i].indices.size()), GL_UNSIGNED_INT, nullptr);
     }
 
-    gl3::BindFramebuffer(GL_READ_FRAMEBUFFER, msaaFramebuffer);
-    gl3::BindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
-    gl3::BlitFramebuffer(0, 0, width, height,
-        0, 0, width, height,
-        GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    gl3::BindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (msaaFramebuffer)
+    {
+        gl3::BindFramebuffer(GL_READ_FRAMEBUFFER, msaaFramebuffer);
+        gl3::BindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
+        gl3::BlitFramebuffer(0, 0, width, height,
+            0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
 }
 
 ModelRenderer::Texture ModelRenderer::UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height,
@@ -277,12 +290,20 @@ void ModelRenderer::Release()
         ReleaseFramebuffer();
         if (program)
             gl3::DeleteProgram(program);
+        if (gridProgram)
+            gl3::DeleteProgram(gridProgram);
+        if (gridVAO)
+            gl3::DeleteVertexArrays(1, &gridVAO);
+        if (gridVBO)
+            gl3::DeleteBuffers(1, &gridVBO);
     }
     gpuMeshes.clear();
     whiteTexture = 0;
     framebuffer = colorTexture = depthBuffer = 0;
     frameWidth = frameHeight = 0;
     program = 0;
+    gridProgram = gridVAO = gridVBO = 0;
+    gridVertexCount = 0;
     textureBytes = 0;
 }
 
@@ -326,32 +347,41 @@ void ModelRenderer::EnsureProgram()
 
 void ModelRenderer::EnsureFramebuffer(int width, int height)
 {
-    width  = std::max(width, 1);
+    width = std::max(width, 1);
     height = std::max(height, 1);
     if (HasFrame(width, height))
         return;
 
     ReleaseFramebuffer();
-
-    gl3::GenFramebuffers(1, &msaaFramebuffer);
-    gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer);
-
-    gl3::GenRenderbuffers(1, &msaaColorBuffer);
-    gl3::BindRenderbuffer(GL_RENDERBUFFER, msaaColorBuffer);
-    gl3::RenderbufferStorageMultisample(GL_RENDERBUFFER, msaaSamples, GL_RGBA8, width, height);
-    gl3::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msaaColorBuffer);
-
-    gl3::GenRenderbuffers(1, &msaaDepthBuffer);
-    gl3::BindRenderbuffer(GL_RENDERBUFFER, msaaDepthBuffer);
-    gl3::RenderbufferStorageMultisample(GL_RENDERBUFFER, msaaSamples, GL_DEPTH_COMPONENT24, width, height);
-    gl3::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msaaDepthBuffer);
-
-    if (gl3::CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-        throw std::runtime_error("Incomplete MSAA framebuffer for model preview.");
+    GLint maxSamples = 0;
+    glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    if (maxSamples >= 2)
+    {
+        gl3::GenFramebuffers(1, &msaaFramebuffer);
+        gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer);
+        gl3::GenRenderbuffers(1, &msaaColorBuffer);
+        gl3::GenRenderbuffers(1, &msaaDepthBuffer);
+        bool complete = false;
+        for (int samples = msaaSamples; samples >= 2; samples /= 2)
+        {
+            if (samples > maxSamples)
+                continue;
+            gl3::BindRenderbuffer(GL_RENDERBUFFER, msaaColorBuffer);
+            gl3::RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA8, width, height);
+            gl3::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, msaaColorBuffer);
+            gl3::BindRenderbuffer(GL_RENDERBUFFER, msaaDepthBuffer);
+            gl3::RenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH_COMPONENT24, width, height);
+            gl3::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, msaaDepthBuffer);
+            complete = gl3::CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+            if (complete)
+                break;
+        }
+        if (!complete)
+            ReleaseMultisampleFramebuffer();
+    }
 
     gl3::GenFramebuffers(1, &framebuffer);
     gl3::BindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-
     glGenTextures(1, &colorTexture);
     glBindTexture(GL_TEXTURE_2D, colorTexture);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -360,9 +390,19 @@ void ModelRenderer::EnsureFramebuffer(int width, int height)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     gl3::FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, colorTexture, 0);
-
-    gl3::BindFramebuffer(GL_FRAMEBUFFER, 0);
-    frameWidth  = width;
+    if (!msaaFramebuffer)
+    {
+        gl3::GenRenderbuffers(1, &depthBuffer);
+        gl3::BindRenderbuffer(GL_RENDERBUFFER, depthBuffer);
+        gl3::RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, width, height);
+        gl3::FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthBuffer);
+    }
+    if (gl3::CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+    {
+        ReleaseFramebuffer();
+        throw std::runtime_error("Incomplete framebuffer for model preview.");
+    }
+    frameWidth = width;
     frameHeight = height;
 }
 
@@ -390,31 +430,27 @@ void ModelRenderer::UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes)
     }
 }
 
-void ModelRenderer::ReleaseFramebuffer()
+void ModelRenderer::ReleaseMultisampleFramebuffer()
 {
-    if (colorTexture)
-        glDeleteTextures(1, &colorTexture);
     if (msaaColorBuffer)
         gl3::DeleteRenderbuffers(1, &msaaColorBuffer);
     if (msaaDepthBuffer)
         gl3::DeleteRenderbuffers(1, &msaaDepthBuffer);
     if (msaaFramebuffer)
         gl3::DeleteFramebuffers(1, &msaaFramebuffer);
+    msaaColorBuffer = msaaDepthBuffer = msaaFramebuffer = 0;
+}
+
+void ModelRenderer::ReleaseFramebuffer()
+{
+    ReleaseMultisampleFramebuffer();
+    if (colorTexture)
+        glDeleteTextures(1, &colorTexture);
+    if (depthBuffer)
+        gl3::DeleteRenderbuffers(1, &depthBuffer);
     if (framebuffer)
         gl3::DeleteFramebuffers(1, &framebuffer);
-    // grid
-    if (gridProgram)
-        gl3::DeleteProgram(gridProgram);
-    if (gridVAO)
-        gl3::DeleteVertexArrays(1, &gridVAO);
-    if (gridVBO)
-        gl3::DeleteBuffers(1, &gridVBO);
-
-    gridProgram = gridVAO = gridVBO = 0;
-    gridVertexCount = 0;
-
-    colorTexture = msaaColorBuffer = msaaDepthBuffer = 0;
-    msaaFramebuffer = framebuffer = 0;
+    colorTexture = depthBuffer = framebuffer = 0;
     frameWidth = frameHeight = 0;
 }
 
