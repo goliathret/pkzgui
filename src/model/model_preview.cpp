@@ -77,6 +77,7 @@ void ModelPreview::Update(const PackageSession& session)
         vertexCount = triangleCount = 0;
         bonePositions.clear();
         boneParents.clear();
+        boneNames.clear();
         boneCount = 0;
         isHierarchy = false;
         active = true;
@@ -131,9 +132,11 @@ namespace
     }
 
     constexpr uint32_t kHierarchyBones = 0x0385;
+    constexpr uint32_t kHierarchyBoneNames = 0x038B;
     constexpr size_t kNameLookupEntry = 8;
     constexpr size_t kBoneRecord = 148;
     constexpr uint32_t kMaxBones = 512;
+    constexpr size_t kBoneNameSize = 64;
 
     const CMChunk* FindChunkRecursive(const CMChunk& node, uint32_t maskedId)
     {
@@ -198,6 +201,48 @@ namespace
                 return found;
         }
         return nullptr;
+    }
+
+    const CMChunk* FindNamesChunk(const PKPackage& package, const CMChunkResourceHeader& resource,
+        const CMChunk* selected)
+    {
+        if (selected)
+        {
+            if (selected->GetMaskedID() == kHierarchyBoneNames)
+                return selected;
+            if (const CMChunk* found = FindChunkRecursive(*selected, kHierarchyBoneNames))
+                return found;
+        }
+        for (const CMChunk& root : package.rootChunks)
+        {
+            if (const CMChunk* resourceRoot = FindResourceByCrc(root, resource.GetCRC()))
+            {
+                if (const CMChunk* found = FindChunkRecursive(*resourceRoot, kHierarchyBoneNames))
+                    return found;
+            }
+        }
+        return nullptr;
+    }
+
+    void ReadBoneNames(std::vector<std::string>& out, size_t count, const PKPackage& package,
+        const CMChunkResourceHeader& resource, const CMChunk* selected, const std::vector<uint8_t>& packageBytes)
+    {
+        out.assign(count, {});
+        const CMChunk* namesChunk = FindNamesChunk(package, resource, selected);
+        if (!namesChunk)
+            return;
+        const size_t headerSize = namesChunk->HeaderSize();
+        if (namesChunk->offset + headerSize + namesChunk->length > packageBytes.size())
+            return;
+        const uint8_t* nameData = packageBytes.data() + namesChunk->offset + headerSize;
+        const size_t nameCount = namesChunk->length / kBoneNameSize;
+        for (size_t i = 0; i < count && i < nameCount; ++i)
+        {
+            char buf[kBoneNameSize + 1]{};
+            std::memcpy(buf, nameData + i * kBoneNameSize, kBoneNameSize);
+            buf[kBoneNameSize] = '\0';
+            out[i] = buf;
+        }
     }
 }
 
@@ -286,6 +331,7 @@ void ModelPreview::LoadHierarchy(const PKPackage& package, const CMChunkResource
                 }
             }
             boneCount = countBe;
+            ReadBoneNames(boneNames, countBe, package, resource, selected, packageBytes);
             camera.Frame(bounds);
             return;
         }
@@ -341,6 +387,7 @@ void ModelPreview::LoadHierarchy(const PKPackage& package, const CMChunkResource
         }
     }
     boneCount = count;
+    ReadBoneNames(boneNames, count, package, resource, selected, packageBytes);
     camera.Frame(bounds);
 }
 
@@ -356,6 +403,7 @@ void ModelPreview::Clear()
     geometry = RZGeometry();
     bonePositions.clear();
     boneParents.clear();
+    boneNames.clear();
     boneCount = 0;
     isHierarchy = false;
     shown = {};
@@ -414,6 +462,46 @@ void ModelPreview::Draw()
     drawList->ChannelsSetCurrent(0);
     drawList->AddImage(static_cast<ImTextureID>(renderer.FrameTexture()), origin,
         ImVec2(origin.x + available.x, origin.y + available.y), ImVec2(0, 1), ImVec2(1, 0));
+
+    if (isHierarchy && !bonePositions.empty() && ImGui::IsItemHovered())
+    {
+        const ImVec2 mouse = ImGui::GetIO().MousePos;
+        const BUVector3 eye = camera.Eye();
+        const Mat4 view = Mat4::LookAt(eye, camera.target, BUVector3(0.0f, 1.0f, 0.0f));
+        const Mat4 projection = Mat4::Perspective(0.785398f, available.x / std::max(available.y, 1.0f), 0.05f,
+            camera.distance * 20.0f + 10.0f);
+        const Mat4 mvp = projection * view;
+        int best = -1;
+        float bestDist = 12.0f;
+        for (size_t i = 0; i < bonePositions.size(); ++i)
+        {
+            const BUVector3& p = bonePositions[i];
+            const float x = mvp.m[0] * p.x + mvp.m[4] * p.y + mvp.m[8] * p.z + mvp.m[12];
+            const float y = mvp.m[1] * p.x + mvp.m[5] * p.y + mvp.m[9] * p.z + mvp.m[13];
+            const float w = mvp.m[3] * p.x + mvp.m[7] * p.y + mvp.m[11] * p.z + mvp.m[15];
+            if (w <= 0.0f)
+                continue;
+            const float sx = origin.x + (x / w * 0.5f + 0.5f) * available.x;
+            const float sy = origin.y + (1.0f - (y / w * 0.5f + 0.5f)) * available.y;
+            const float dx = mouse.x - sx;
+            const float dy = mouse.y - sy;
+            const float dist = std::sqrt(dx * dx + dy * dy);
+            if (dist < bestDist)
+            {
+                bestDist = dist;
+                best = static_cast<int>(i);
+            }
+        }
+        if (best >= 0)
+        {
+            const std::string& boneName =
+                best < static_cast<int>(boneNames.size()) && !boneNames[best].empty()
+                ? boneNames[best]
+                : ("bone " + std::to_string(best));
+            ImGui::SetTooltip("%s", boneName.c_str());
+        }
+    }
+
     drawList->ChannelsMerge();
 }
 

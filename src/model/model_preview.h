@@ -82,6 +82,7 @@ private:
     bool isHierarchy = false;
     std::vector<BUVector3> bonePositions;
     std::vector<uint32_t> boneParents;
+    std::vector<std::string> boneNames;
     size_t boneCount = 0;
 
     ModelRenderer renderer;
