@@ -7,7 +7,9 @@
 #include "BaseUtils/BUPng.h"
 #include "imgui.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <functional>
 #include <iterator>
 #include <stdexcept>
 #include <utility>
@@ -591,6 +593,99 @@ void ModelPreview::ApplyRetexture(PackageSession& session, size_t index)
     const RZTexture texture = RZTexture::Load(*shown.package, header);
     ReplaceTexture(session, header, material.retexturePath, texture.desc.width, texture.desc.height);
     renderDirty = true;
+}
+
+void ModelPreview::ApplyMaterialFlags(PackageSession& session, size_t index, uint32_t flags)
+{
+    if (!session.package || !SelectionKey::Of(session).SameChunk(shown))
+        throw std::runtime_error("Select the model material in this package first.");
+    if (index >= geometry.materials.size())
+        throw std::runtime_error("Select a material first.");
+
+    const auto resource = session.SelectedResource();
+    if (!resource || resource->GetResourceType() != kCMResourceType_Geometry)
+        throw std::runtime_error("Material flags can only be edited on a Geometry resource.");
+
+    auto matchesResource = [&](CMChunk& chunk) -> bool {
+        const uint32_t id = chunk.GetMaskedID();
+        if ((id != GenSub_Resource && id != Gen_PostLoadData) || !chunk.FindChild(Geo_Geometry))
+            return false;
+        const CMChunk* headerChunk = chunk.FindChild(GenSub_ResourceHeader);
+        if (!headerChunk)
+            return false;
+        const CMChunkResourceHeader candidate(*headerChunk);
+        return candidate.GetResourceType() == kCMResourceType_Geometry && candidate.IsSameResource(*resource);
+        };
+
+    CMChunk* resourceChunk = nullptr;
+    for (CMChunk& root : session.package->rootChunks)
+    {
+        if (matchesResource(root))
+        {
+            resourceChunk = &root;
+            break;
+        }
+        std::function<CMChunk*(CMChunk&)> findDesc = [&](CMChunk& node) -> CMChunk* {
+            for (CMChunk& child : node.children)
+            {
+                if (matchesResource(child))
+                    return &child;
+                if (CMChunk* found = findDesc(child))
+                    return found;
+            }
+            return nullptr;
+            };
+        resourceChunk = findDesc(root);
+        if (resourceChunk)
+            break;
+    }
+    if (!resourceChunk)
+        throw std::runtime_error("Could not locate the geometry resource chunk for this model.");
+
+    std::vector<CMChunk*> materialChunks;
+    std::function<void(CMChunk&)> collect = [&](CMChunk& node) {
+        for (CMChunk& child : node.children)
+        {
+            if (child.GetMaskedID() == Geo_MaterialInfo)
+                materialChunks.push_back(&child);
+            collect(child);
+        }
+        };
+    collect(*resourceChunk);
+
+    if (index >= materialChunks.size())
+        throw std::runtime_error("Material index does not match any Geo_MaterialInfo chunk.");
+
+    CMChunk& matChunk = *materialChunks[index];
+    constexpr size_t kFlagsOffset = 32;
+    if (matChunk.data.size() < kFlagsOffset + 4)
+        throw std::runtime_error("Material chunk is too small to contain materialFlags.");
+
+    uint8_t* p = matChunk.data.data() + kFlagsOffset;
+    if (matChunk.isLittleEndian)
+    {
+        p[0] = uint8_t(flags);
+        p[1] = uint8_t(flags >> 8);
+        p[2] = uint8_t(flags >> 16);
+        p[3] = uint8_t(flags >> 24);
+    }
+    else
+    {
+        p[0] = uint8_t(flags >> 24);
+        p[1] = uint8_t(flags >> 16);
+        p[2] = uint8_t(flags >> 8);
+        p[3] = uint8_t(flags);
+    }
+
+    geometry.materials[index].flags = flags;
+
+    session.MarkEdited("Material flags updated (CELLSHADING / RIM_LIGHTING). Save the package to write to disk.");
+    Log("Material \"" + geometry.materials[index].name + "\" flags set to 0x" +
+        ([&] {
+            char buf[16];
+            std::snprintf(buf, sizeof(buf), "%08X", flags);
+            return std::string(buf);
+            })());
 }
 
 const std::optional<CMChunkResourceHeader>& ModelPreview::PackageTexture(size_t material) const

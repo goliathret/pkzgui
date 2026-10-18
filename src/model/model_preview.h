@@ -31,6 +31,7 @@ public:
     void UseRetexture(size_t material);
     void ClearRetexture(size_t material);
     void ApplyRetexture(PackageSession& session, size_t material);
+    void ApplyMaterialFlags(PackageSession& session, size_t material, uint32_t flags);
 
     bool IsActive() const { return active; }
     const std::string& Name() const { return name; }
@@ -66,6 +67,7 @@ private:
     void DrawOverlayControls(bool collapsed, bool insidePopup);
     void DrawMaterialCombo(const char* id);
     void DrawTextureSummary(size_t index);
+    void DrawMaterialFlags(PackageSession& session, size_t index);
     void DrawRetextureActions(PackageSession& session, GLFWwindow* window, size_t index);
     void DrawShaderExport(GLFWwindow* window, size_t index);
     void Log(std::string message);
