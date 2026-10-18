@@ -218,6 +218,8 @@ void ModelPreview::DrawActions(PackageSession& session, GLFWwindow* window)
         DrawMaterialFlags(session, index);
         DrawRetextureActions(session, window, index);
         ImGui::Separator();
+        DrawGeometryIO(session, window);
+        ImGui::Separator();
         DrawShaderExport(window, index);
     }
     catch (const std::exception& ex)
@@ -268,7 +270,6 @@ void ModelPreview::DrawMaterialFlags(PackageSession& session, size_t index)
     if (index >= geometry.materials.size())
         return;
 
-    // MaterialFlags bits from EOT's X360 schema (Geo_MaterialInfo.materialFlags)
     constexpr uint32_t kCellShading = 0x00080000u;
     constexpr uint32_t kRimLighting = 0x08000000u;
 
@@ -344,6 +345,25 @@ void ModelPreview::DrawRetextureActions(PackageSession& session, GLFWwindow* win
     ImGui::EndDisabled();
     if (apply)
         ApplyRetexture(session, index);
+}
+
+void ModelPreview::DrawGeometryIO(PackageSession& session, GLFWwindow* window)
+{
+    ImGui::TextUnformatted("Mesh geometry");
+    const ImVec2 fullWidth(-1, 0);
+    ImGui::BeginDisabled(geometry.meshes.empty() || isHierarchy);
+    const bool exportObj = ImGui::Button("Export OBJ...", fullWidth);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Exports decoded mesh positions, normals, UVs and triangles. One object per mesh; materials by name.");
+    if (exportObj)
+    {
+        const auto path = PickSaveFile(window, "Wavefront OBJ", "obj", SanitizeFileName(name) + ".obj");
+        if (!path.empty())
+        {
+            ExportGeometryObj(path);
+            Log("Exported OBJ: " + path);
+        }
+    }
 }
 
 void ModelPreview::DrawShaderExport(GLFWwindow* window, size_t index)

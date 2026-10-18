@@ -32,6 +32,7 @@ public:
     void ClearRetexture(size_t material);
     void ApplyRetexture(PackageSession& session, size_t material);
     void ApplyMaterialFlags(PackageSession& session, size_t material, uint32_t flags);
+    void ExportGeometryObj(const std::string& path) const;
 
     bool IsActive() const { return active; }
     const std::string& Name() const { return name; }
@@ -69,6 +70,7 @@ private:
     void DrawTextureSummary(size_t index);
     void DrawMaterialFlags(PackageSession& session, size_t index);
     void DrawRetextureActions(PackageSession& session, GLFWwindow* window, size_t index);
+    void DrawGeometryIO(PackageSession& session, GLFWwindow* window);
     void DrawShaderExport(GLFWwindow* window, size_t index);
     void Log(std::string message);
 
