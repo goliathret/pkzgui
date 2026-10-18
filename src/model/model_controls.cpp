@@ -48,8 +48,8 @@ namespace
         {
             const auto& sampler = material.samplers[i];
             json << Separator(i) << "\n    {\"slot\":" << i << ",\"crc\":" << sampler.crc
-                 << ",\"addressMode\":" << unsigned(sampler.addressMode)
-                 << ",\"sourcePath\":" << JsonString(sampler.sourcePath) << '}';
+                << ",\"addressMode\":" << unsigned(sampler.addressMode)
+                << ",\"sourcePath\":" << JsonString(sampler.sourcePath) << '}';
         }
         json << "\n  ]";
     }
@@ -69,7 +69,7 @@ namespace
         {
             const auto& pass = material.passes[i];
             json << Separator(i) << "\n    {\"slot\":" << pass.slot << ",\"set\":" << pass.set
-                 << ",\"format\":" << pass.format;
+                << ",\"format\":" << pass.format;
             WriteShader(json, binary, "vertex", material, pass.vertex);
             WriteShader(json, binary, "pixel", material, pass.pixel);
             json << '}';
@@ -84,13 +84,13 @@ namespace
         {
             const auto& declaration = material.declarations[i];
             json << Separator(i) << "\n    {\"format\":" << declaration.format << ",\"slot\":" << declaration.slot
-                 << ",\"set\":" << declaration.set << ",\"attributes\":[";
+                << ",\"set\":" << declaration.set << ",\"attributes\":[";
             for (size_t j = 0; j < declaration.elements.size(); ++j)
             {
                 const auto& element = declaration.elements[j];
                 json << Separator(j) << "{\"stream\":" << element.stream << ",\"offset\":" << element.offset
-                     << ",\"type\":" << element.type << ",\"usage\":" << unsigned(element.usage)
-                     << ",\"index\":" << unsigned(element.index) << '}';
+                    << ",\"type\":" << element.type << ",\"usage\":" << unsigned(element.usage)
+                    << ",\"index\":" << unsigned(element.index) << '}';
             }
             json << "]}";
         }
@@ -215,6 +215,7 @@ void ModelPreview::DrawActions(PackageSession& session, GLFWwindow* window)
     DrawTextureSummary(index);
     try
     {
+        DrawMaterialFlags(session, index);
         DrawRetextureActions(session, window, index);
         ImGui::Separator();
         DrawShaderExport(window, index);
@@ -260,6 +261,44 @@ void ModelPreview::DrawTextureSummary(size_t index)
     ImGui::EndDisabled();
     if (useRetexture)
         UseRetexture(index);
+}
+
+void ModelPreview::DrawMaterialFlags(PackageSession& session, size_t index)
+{
+    if (index >= geometry.materials.size())
+        return;
+
+    // MaterialFlags bits from EOT's X360 schema (Geo_MaterialInfo.materialFlags)
+    constexpr uint32_t kCellShading = 0x00080000u;
+    constexpr uint32_t kRimLighting = 0x08000000u;
+
+    uint32_t flags = geometry.materials[index].flags;
+    bool cellShading = (flags & kCellShading) != 0;
+    bool rimLighting = (flags & kRimLighting) != 0;
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Material flags");
+    bool changed = false;
+    if (ImGui::Checkbox("Cell shading", &cellShading))
+        changed = true;
+    ImGui::SetItemTooltip("MaterialFlags::CELLSHADING (0x00080000). Saved into the package on change.");
+    if (ImGui::Checkbox("Rim lighting", &rimLighting))
+        changed = true;
+    ImGui::SetItemTooltip("MaterialFlags::RIM_LIGHTING (0x08000000). Saved into the package on change.");
+
+    if (!changed)
+        return;
+
+    if (cellShading)
+        flags |= kCellShading;
+    else
+        flags &= ~kCellShading;
+    if (rimLighting)
+        flags |= kRimLighting;
+    else
+        flags &= ~kRimLighting;
+
+    ApplyMaterialFlags(session, index, flags);
 }
 
 void ModelPreview::DrawRetextureActions(PackageSession& session, GLFWwindow* window, size_t index)
@@ -327,7 +366,7 @@ void ExportMaterialShaders(const CMChunkMaterialInfo& material, const std::strin
     std::vector<uint8_t> binary;
     std::ostringstream json;
     json << "{\n  \"version\": 1,\n  \"material\": " << JsonString(material.name)
-         << ",\n  \"materialFlags\": " << material.flags;
+        << ",\n  \"materialFlags\": " << material.flags;
     WriteSamplers(json, material);
     WritePasses(json, material, binary);
     WriteDeclarations(json, material);
