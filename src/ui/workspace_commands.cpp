@@ -126,6 +126,7 @@ void Workspace::RefreshSelection()
     }
     texturePreview.Update(session);
     modelPreview.Update(session);
+    hudPreview.Update(session);
 }
 
 void Workspace::OpenPackage()
