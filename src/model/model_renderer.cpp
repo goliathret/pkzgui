@@ -9,7 +9,7 @@ namespace
     constexpr float kFieldOfView = 0.785398f;
     constexpr float kNearPlane = 0.05f;
     constexpr float kClearColor[4] = {0.18f, 0.19f, 0.22f, 1.0f};
-    constexpr float kLightDirection[3] = {0.4f, -0.8f, 0.3f};
+    constexpr float kLightDirection[3] = {-0.4f, -0.8f, -0.3f};
 
     enum Attribute : GLuint
     {
@@ -68,16 +68,21 @@ void main() {
     const char* const kGridVertexShader = R"(
 in vec3 aPos;
 uniform mat4 uMVP;
+out vec3 vPos;
 void main() {
+    vPos = aPos;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
 )";
 
     const char* const kGridFragmentShader = R"(
+in vec3 vPos;
 uniform vec3 uColor;
 out vec4 fragColor;
 void main() {
-    fragColor = vec4(uColor, 1.0);
+    float dist = length(vPos.xz);
+    float alpha = 1.0 - smoothstep(6.5, 10.0, dist);
+    fragColor = vec4(uColor, alpha);
 }
 )";
 
@@ -214,6 +219,8 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
     const Mat4 modelViewProjection = projection * (view * model);
 
     EnsureGrid();
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     gl3::UseProgram(gridProgram);
     gl3::UniformMatrix4fv(gl3::GetUniformLocation(gridProgram, "uMVP"), 1, GL_FALSE, modelViewProjection.m);
@@ -222,6 +229,7 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
     gl3::BindVertexArray(gridVAO);
     glDrawArrays(GL_LINES, 0, gridVertexCount);
     gl3::BindVertexArray(0);
+    glDisable(GL_BLEND);
 
     gl3::UseProgram(program);
     gl3::UniformMatrix4fv(Uniform("uMVP"), 1, GL_FALSE, modelViewProjection.m);
@@ -295,12 +303,17 @@ void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, cons
         camera.distance * 20.0f + 10.0f);
     const Mat4 modelViewProjection = projection * (view * model);
 
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
     gl3::UseProgram(gridProgram);
     gl3::UniformMatrix4fv(gl3::GetUniformLocation(gridProgram, "uMVP"), 1, GL_FALSE, modelViewProjection.m);
     gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 0.35f, 0.37f, 0.40f);
+
     gl3::BindVertexArray(gridVAO);
     glDrawArrays(GL_LINES, 0, gridVertexCount);
     gl3::BindVertexArray(0);
+    glDisable(GL_BLEND);
 
     std::vector<float> lineVerts;
     lineVerts.reserve(positions.size() * 6);
