@@ -121,10 +121,12 @@ void Workspace::DrawResourcePanel()
         texturePreview.Draw();
     else if (modelPreview.IsActive())
         modelPreview.Draw();
+    else if (hudPreview.IsActive())
+        hudPreview.Draw();
     else if (audio)
         Execute(DrawAudioPreview(*audio, player));
     else
-        ImGui::TextDisabled("Select a texture, geometry model, hierarchy, or audio sample.");
+        ImGui::TextDisabled("Select a texture, geometry model, hierarchy, HUD, or audio sample.");
     ImGui::EndChild();
 }
 
@@ -186,6 +188,7 @@ void Workspace::DrawFields()
             DrawResourceFields(*resource);
         texturePreview.DrawFields();
         modelPreview.DrawFields();
+        hudPreview.DrawFields();
         if (audio)
             DrawAudioFields(*audio);
         if (!audioError.empty())

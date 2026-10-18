@@ -1,6 +1,7 @@
 #pragma once
 #include "app/app_menu.h"
 #include "audio/audio.h"
+#include "hud/hud_preview.h"
 #include "model/model_preview.h"
 #include "package/package_session.h"
 #include "texture/texture.h"
@@ -72,6 +73,7 @@ private:
     PackageSession session;
     TexturePreview texturePreview;
     ModelPreview modelPreview;
+    HudPreview hudPreview;
     AudioPlayer player;
     DebugLog log;
     PaneSizes panes;
