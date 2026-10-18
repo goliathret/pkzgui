@@ -7,10 +7,14 @@
 #include "BaseUtils/BUPng.h"
 #include "imgui.h"
 #include <algorithm>
+#include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <iterator>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -22,6 +26,369 @@ namespace
         {0.75f, 0.78f, 0.82f}, {0.85f, 0.55f, 0.45f}, {0.45f, 0.70f, 0.55f},
         {0.55f, 0.60f, 0.85f}, {0.80f, 0.70f, 0.40f}, {0.70f, 0.50f, 0.70f},
     };
+
+    void WriteBytesBE(uint8_t* p, const void* src, size_t size, bool littleEndian)
+    {
+        std::memcpy(p, src, size);
+        if (!littleEndian)
+            CMChunk::ByteSwap(p, size);
+    }
+
+    void WriteU16At(std::vector<uint8_t>& buf, size_t at, uint16_t value, bool littleEndian)
+    {
+        if (at + 2 > buf.size())
+            buf.resize(at + 2);
+        WriteBytesBE(buf.data() + at, &value, 2, littleEndian);
+    }
+
+    void WriteU32At(std::vector<uint8_t>& buf, size_t at, uint32_t value, bool littleEndian)
+    {
+        if (at + 4 > buf.size())
+            buf.resize(at + 4);
+        WriteBytesBE(buf.data() + at, &value, 4, littleEndian);
+    }
+
+    void WriteF32At(std::vector<uint8_t>& buf, size_t at, float value, bool littleEndian)
+    {
+        if (at + 4 > buf.size())
+            buf.resize(at + 4);
+        WriteBytesBE(buf.data() + at, &value, 4, littleEndian);
+    }
+
+    uint32_t PackSignedBits(float value, int width, float scale)
+    {
+        const int maxPos = (1 << (width - 1)) - 1;
+        int quantized = int(std::lround(std::clamp(value, -1.0f, 1.0f) * scale));
+        quantized = std::clamp(quantized, -maxPos - 1, maxPos);
+        if (quantized < 0)
+            quantized += 1 << width;
+        return uint32_t(quantized) & ((1u << width) - 1u);
+    }
+
+    uint32_t PackNormal101111(float nx, float ny, float nz)
+    {
+        const uint32_t x = PackSignedBits(nx, 11, 1024.0f);
+        const uint32_t y = PackSignedBits(ny, 11, 1024.0f);
+        const uint32_t z = PackSignedBits(nz, 10, 512.0f);
+        return x | (y << 11) | (z << 22);
+    }
+
+    struct ObjMesh
+    {
+        std::string name;
+        std::string material;
+        std::vector<float> positions;
+        std::vector<float> normals;
+        std::vector<float> texcoords;
+        std::vector<uint32_t> indices;
+    };
+
+    struct ObjData
+    {
+        std::vector<float> positions;
+        std::vector<float> normals;
+        std::vector<float> texcoords;
+        std::vector<ObjMesh> meshes;
+    };
+
+    int ParseObjIndex(const std::string& token, int count)
+    {
+        if (token.empty() || count <= 0)
+            return -1;
+        const size_t slash = token.find('/');
+        const std::string head = slash == std::string::npos ? token : token.substr(0, slash);
+        if (head.empty())
+            return -1;
+        int value = std::stoi(head);
+        if (value < 0)
+            value = count + value + 1;
+        if (value < 1 || value > count)
+            throw std::runtime_error("OBJ index out of range");
+        return value - 1;
+    }
+
+    void ParseObjFaceCorner(const std::string& token, int vCount, int vtCount, int vnCount,
+        int& vi, int& ti, int& ni)
+    {
+        vi = ti = ni = -1;
+        if (token.empty())
+            return;
+        size_t a = 0;
+        size_t b = token.find('/');
+        const std::string vPart = token.substr(0, b);
+        vi = ParseObjIndex(vPart, vCount);
+        if (b == std::string::npos)
+            return;
+        a = b + 1;
+        b = token.find('/', a);
+        const std::string vtPart = token.substr(a, b == std::string::npos ? std::string::npos : b - a);
+        if (!vtPart.empty())
+            ti = ParseObjIndex(vtPart, vtCount);
+        if (b == std::string::npos)
+            return;
+        const std::string vnPart = token.substr(b + 1);
+        if (!vnPart.empty())
+            ni = ParseObjIndex(vnPart, vnCount);
+    }
+
+    ObjData ParseObj(const std::string& text)
+    {
+        ObjData data;
+        ObjMesh current;
+        current.name = "mesh_0";
+        bool meshStarted = false;
+        std::string material;
+
+        std::istringstream stream(text);
+        std::string line;
+        while (std::getline(stream, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            size_t i = 0;
+            while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])))
+                ++i;
+            if (i >= line.size() || line[i] == '#')
+                continue;
+            std::istringstream ls(line.substr(i));
+            std::string tag;
+            ls >> tag;
+            if (tag == "v")
+            {
+                float x = 0, y = 0, z = 0;
+                ls >> x >> y >> z;
+                data.positions.insert(data.positions.end(), {x, y, z});
+            }
+            else if (tag == "vn")
+            {
+                float x = 0, y = 0, z = 0;
+                ls >> x >> y >> z;
+                data.normals.insert(data.normals.end(), {x, y, z});
+            }
+            else if (tag == "vt")
+            {
+                float u = 0, t = 0;
+                ls >> u >> t;
+                data.texcoords.insert(data.texcoords.end(), {u, t});
+            }
+            else if (tag == "o" || tag == "g")
+            {
+                if (meshStarted && !current.indices.empty())
+                    data.meshes.push_back(std::move(current));
+                current = ObjMesh{};
+                current.material = material;
+                std::string rest;
+                std::getline(ls, rest);
+                size_t s = 0;
+                while (s < rest.size() && std::isspace(static_cast<unsigned char>(rest[s])))
+                    ++s;
+                current.name = s < rest.size() ? rest.substr(s) : (tag + "_" + std::to_string(data.meshes.size()));
+                meshStarted = true;
+            }
+            else if (tag == "usemtl")
+            {
+                ls >> material;
+                if (!meshStarted)
+                {
+                    current.material = material;
+                }
+                else if (!current.indices.empty())
+                {
+                    data.meshes.push_back(std::move(current));
+                    current = ObjMesh{};
+                    current.name = "mesh_" + std::to_string(data.meshes.size());
+                    current.material = material;
+                }
+                else
+                    current.material = material;
+            }
+            else if (tag == "f")
+            {
+                meshStarted = true;
+                const int vCount = int(data.positions.size() / 3);
+                const int vtCount = int(data.texcoords.size() / 2);
+                const int vnCount = int(data.normals.size() / 3);
+                std::vector<int> vis, tis, nis;
+                std::string corner;
+                while (ls >> corner)
+                {
+                    int vi = -1, ti = -1, ni = -1;
+                    ParseObjFaceCorner(corner, vCount, vtCount, vnCount, vi, ti, ni);
+                    if (vi < 0)
+                        throw std::runtime_error("OBJ face is missing a vertex index");
+                    vis.push_back(vi);
+                    tis.push_back(ti);
+                    nis.push_back(ni);
+                }
+                if (vis.size() < 3)
+                    throw std::runtime_error("OBJ face has fewer than 3 corners");
+                for (size_t t = 1; t + 1 < vis.size(); ++t)
+                {
+                    const int corners[3] = {vis[0], vis[t], vis[t + 1]};
+                    const int tc[3] = {tis[0], tis[t], tis[t + 1]};
+                    const int nc[3] = {nis[0], nis[t], nis[t + 1]};
+                    for (int c = 0; c < 3; ++c)
+                    {
+                        const uint32_t local = uint32_t(current.positions.size() / 3);
+                        current.positions.insert(current.positions.end(), {
+                            data.positions[size_t(corners[c]) * 3 + 0],
+                            data.positions[size_t(corners[c]) * 3 + 1],
+                            data.positions[size_t(corners[c]) * 3 + 2]});
+                        if (nc[c] >= 0)
+                            current.normals.insert(current.normals.end(), {
+                            data.normals[size_t(nc[c]) * 3 + 0],
+                            data.normals[size_t(nc[c]) * 3 + 1],
+                            data.normals[size_t(nc[c]) * 3 + 2]});
+                        else
+                            current.normals.insert(current.normals.end(), {0.0f, 1.0f, 0.0f});
+                        if (tc[c] >= 0)
+                            current.texcoords.insert(current.texcoords.end(), {
+                            data.texcoords[size_t(tc[c]) * 2 + 0],
+                            data.texcoords[size_t(tc[c]) * 2 + 1]});
+                        else
+                            current.texcoords.insert(current.texcoords.end(), {0.0f, 0.0f});
+                        current.indices.push_back(local);
+                    }
+                }
+            }
+        }
+        if (meshStarted || !current.indices.empty())
+            data.meshes.push_back(std::move(current));
+        if (data.meshes.empty())
+            throw std::runtime_error("OBJ contains no faces");
+        return data;
+    }
+
+    struct MeshLayout
+    {
+        int position = 0;
+        int normal = -1;
+        int uv = -1;
+        uint32_t normalType = CMChunkMaterialInfo::VertexElement::kFormat_10_11_11;
+        uint32_t uvType = CMChunkMaterialInfo::VertexElement::kFormat_16_16 |
+            CMChunkMaterialInfo::VertexElement::kSigned | CMChunkMaterialInfo::VertexElement::kInteger;
+        bool integerUV = false;
+    };
+
+    MeshLayout ResolveLayout(const CMChunkMaterialInfo& material, uint32_t vertexFormat, uint32_t stride)
+    {
+        using VE = CMChunkMaterialInfo::VertexElement;
+        MeshLayout layout;
+        if (const auto* declaration = material.FindDeclaration(vertexFormat))
+        {
+            bool hasPosition = false;
+            for (const auto& element : declaration->elements)
+            {
+                if (element.stream != 0)
+                    continue;
+                if (element.usage == VE::kUsagePosition && element.index == 0)
+                {
+                    layout.position = element.offset;
+                    hasPosition = true;
+                }
+                if (element.usage == VE::kUsageNormal && element.index == 0)
+                {
+                    layout.normal = element.offset;
+                    layout.normalType = element.type;
+                }
+                if (element.usage == VE::kUsageTexCoord && element.index == material.uvSet)
+                {
+                    layout.uv = element.offset;
+                    layout.uvType = element.type;
+                }
+            }
+            if (!hasPosition)
+                throw std::runtime_error("Material vertex declaration has no position");
+        }
+        else
+        {
+            int offset = 12;
+            if (vertexFormat & 0x0002)
+            {
+                layout.normal = offset;
+                offset += 4;
+            }
+            for (uint32_t flag : {0x0004u, 0x0008u, 0x0010u})
+                if (vertexFormat & flag)
+                    offset += 4;
+            if ((vertexFormat >> 5) & 15)
+                layout.uv = offset;
+        }
+        const uint32_t uvFormat = layout.uvType & VE::kFormatMask;
+        layout.integerUV = layout.uv >= 0 && uvFormat == VE::kFormat_16_16 &&
+            (layout.uvType & VE::kInteger) != 0;
+        if (size_t(layout.position) + 12 > stride)
+            throw std::runtime_error("Invalid position offset for mesh stride");
+        return layout;
+    }
+
+    void EncodeVertex(std::vector<uint8_t>& buffer, size_t vertexBase, uint32_t stride, const MeshLayout& layout,
+        float px, float py, float pz, float nx, float ny, float nz, float u, float v, bool littleEndian)
+    {
+        using VE = CMChunkMaterialInfo::VertexElement;
+        if (vertexBase + stride > buffer.size())
+            buffer.resize(vertexBase + stride, 0);
+        WriteF32At(buffer, vertexBase + size_t(layout.position), px, littleEndian);
+        WriteF32At(buffer, vertexBase + size_t(layout.position) + 4, py, littleEndian);
+        WriteF32At(buffer, vertexBase + size_t(layout.position) + 8, pz, littleEndian);
+        if (layout.normal >= 0)
+        {
+            const uint32_t normalFormat = layout.normalType & VE::kFormatMask;
+            if (normalFormat == VE::kFormat_10_11_11)
+                WriteU32At(buffer, vertexBase + size_t(layout.normal), PackNormal101111(nx, ny, nz), littleEndian);
+            else if (normalFormat == VE::kFormat_32_32_32_FLOAT)
+            {
+                WriteF32At(buffer, vertexBase + size_t(layout.normal), nx, littleEndian);
+                WriteF32At(buffer, vertexBase + size_t(layout.normal) + 4, ny, littleEndian);
+                WriteF32At(buffer, vertexBase + size_t(layout.normal) + 8, nz, littleEndian);
+            }
+        }
+        if (layout.uv >= 0)
+        {
+            const uint32_t uvFormat = layout.uvType & VE::kFormatMask;
+            const bool uvSigned = (layout.uvType & VE::kSigned) != 0;
+            const bool uvInteger = (layout.uvType & VE::kInteger) != 0;
+            if (uvFormat == VE::kFormat_16_16)
+            {
+                auto pack = [&](float value) -> uint16_t {
+                    if (uvInteger)
+                    {
+                        const int quantized = int(std::lround(value));
+                        if (uvSigned)
+                            return uint16_t(int16_t(std::clamp(quantized, -32768, 32767)));
+                        return uint16_t(std::clamp(quantized, 0, 65535));
+                    }
+                    if (uvSigned)
+                    {
+                        const float clamped = std::clamp(value, -1.0f, 1.0f);
+                        return uint16_t(int16_t(std::lround(clamped * 32767.0f)));
+                    }
+                    const float clamped = std::clamp(value, 0.0f, 1.0f);
+                    return uint16_t(std::lround(clamped * 65535.0f));
+                    };
+                WriteU16At(buffer, vertexBase + size_t(layout.uv), pack(u), littleEndian);
+                WriteU16At(buffer, vertexBase + size_t(layout.uv) + 2, pack(v), littleEndian);
+            }
+            else if (uvFormat == VE::kFormat_32_32_FLOAT)
+            {
+                WriteF32At(buffer, vertexBase + size_t(layout.uv), u, littleEndian);
+                WriteF32At(buffer, vertexBase + size_t(layout.uv) + 4, v, littleEndian);
+            }
+        }
+    }
+
+    uint32_t ReadU32Chunk(const CMChunk& chunk, size_t offset)
+    {
+        size_t at = offset;
+        return chunk.Read<uint32_t>(at);
+    }
+
+    void WriteU32Chunk(CMChunk& chunk, size_t offset, uint32_t value)
+    {
+        if (chunk.data.size() < offset + 4)
+            throw std::runtime_error("Mesh descriptor is truncated");
+        WriteBytesBE(chunk.data.data() + offset, &value, 4, chunk.isLittleEndian);
+    }
 }
 
 ModelPreview::~ModelPreview()
@@ -686,6 +1053,78 @@ void ModelPreview::ApplyMaterialFlags(PackageSession& session, size_t index, uin
             std::snprintf(buf, sizeof(buf), "%08X", flags);
             return std::string(buf);
             })());
+}
+
+void ModelPreview::ExportGeometryObj(const std::string& path) const
+{
+    if (geometry.meshes.empty())
+        throw std::runtime_error("No meshes to export.");
+
+    std::ostringstream out;
+    out << "# pkzgui OBJ export\n";
+    out << "# model " << name << "\n";
+    out << "mtllib " << SanitizeFileName(name) << ".mtl\n";
+
+    size_t vertexBase = 1;
+    size_t uvBase = 1;
+    size_t normalBase = 1;
+    for (size_t mi = 0; mi < geometry.meshes.size(); ++mi)
+    {
+        const RZGeometry::Mesh& mesh = geometry.meshes[mi];
+        const std::string matName = mesh.material < geometry.materials.size()
+            ? geometry.materials[mesh.material].name
+            : ("mat_" + std::to_string(mesh.material));
+        out << "o mesh_" << mi << "\n";
+        out << "usemtl " << matName << "\n";
+
+        const size_t vertexCount = mesh.VertexCount();
+        for (size_t v = 0; v < vertexCount; ++v)
+        {
+            out << "v " << mesh.positions[v * 3 + 0] << ' ' << mesh.positions[v * 3 + 1] << ' '
+                << mesh.positions[v * 3 + 2] << '\n';
+        }
+        if (mesh.hasUV && mesh.texcoords.size() >= vertexCount * 2)
+        {
+            for (size_t v = 0; v < vertexCount; ++v)
+                out << "vt " << mesh.texcoords[v * 2 + 0] << ' ' << mesh.texcoords[v * 2 + 1] << '\n';
+        }
+        if (mesh.normals.size() >= vertexCount * 3)
+        {
+            for (size_t v = 0; v < vertexCount; ++v)
+                out << "vn " << mesh.normals[v * 3 + 0] << ' ' << mesh.normals[v * 3 + 1] << ' '
+                << mesh.normals[v * 3 + 2] << '\n';
+        }
+
+        const bool writeUv = mesh.hasUV && mesh.texcoords.size() >= vertexCount * 2;
+        const bool writeNormal = mesh.normals.size() >= vertexCount * 3;
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3)
+        {
+            out << "f";
+            for (size_t c = 0; c < 3; ++c)
+            {
+                const size_t idx = mesh.indices[i + c];
+                out << ' ' << (vertexBase + idx);
+                if (writeUv || writeNormal)
+                {
+                    out << '/';
+                    if (writeUv)
+                        out << (uvBase + idx);
+                    if (writeNormal)
+                        out << '/' << (normalBase + idx);
+                }
+            }
+            out << '\n';
+        }
+
+        vertexBase += vertexCount;
+        if (writeUv)
+            uvBase += vertexCount;
+        if (writeNormal)
+            normalBase += vertexCount;
+    }
+
+    const std::string text = out.str();
+    WriteFile(std::filesystem::u8path(path), std::vector<uint8_t>(text.begin(), text.end()));
 }
 
 const std::optional<CMChunkResourceHeader>& ModelPreview::PackageTexture(size_t material) const
