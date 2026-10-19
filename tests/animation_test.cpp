@@ -197,6 +197,63 @@ void SkinningAndRotation()
     Check(Rejects([&] { skin.Apply(rig, world, geometry, output); }),
           "Invalid skin palette index was accepted");
 }
+void SkinLayouts()
+{
+    for (const auto format : {0x1603u, 0x1627u})
+        for (bool little : {false, true})
+        {
+            PKPackage package;
+            package.isLittleEndian = little;
+            auto source = CMChunk::Container(GenSub_Resource, 1);
+            source.AddChild(CMChunkResourceHeader::Build(1, kCMResourceType_Geometry, 31, 0, 4096, 0,
+                                                        "shared costume", little));
+            auto geo = CMChunk::Container(Geo_Geometry, 3);
+            auto lod = CMChunk::Container(Geo_GeomLOD, 3);
+            auto info = CMChunk::Leaf(Geo_GeomLODInfo, 6, std::vector<uint8_t>(24));
+            info.isLittleEndian = little;
+            lod.AddChild(info);
+            auto descriptor = CMChunk::Leaf(Geo_GeomMesh, 8, {});
+            descriptor.isLittleEndian = little;
+            const uint32_t stride = format == 0x1603 ? 24 : 32;
+            for (uint32_t value : {0u, 0u, stride, format, 1u, 0u, 3u, 2u, UINT32_MAX, 2u, 4u, 0u, 0u, 1u})
+                descriptor.Append(value);
+            lod.AddChild(descriptor);
+            geo.AddChild(lod);
+            source.AddChild(geo);
+            auto post = CMChunk::Container(Gen_PostLoadData, 1);
+            post.offset = 4096;
+            post.AddChild(source.children[0]);
+            auto buffers = CMChunk::Container(Geo_GeomLOD, 3);
+            buffers.AddChild(info);
+            auto vertices = CMChunk::Leaf(GenSub_VertexList, 1, std::vector<uint8_t>(stride));
+            vertices.isLittleEndian = little;
+            Put32(vertices, stride - 8, 0x00000100);
+            Put32(vertices, stride - 4, 0x000040BF);
+            buffers.AddChild(vertices);
+            post.AddChild(buffers);
+            package.rootChunks = {source, post};
+            RZGeometry geometry;
+            geometry.meshes.resize(1);
+            geometry.meshes[0].positions = {0, 0, 0};
+            geometry.meshes[0].normals = {0, 1, 0};
+            geometry.materials.resize(1); // Shader pass does not declare the appended skin inputs.
+            auto rig = Rig();
+            auto header = CMChunkResourceHeader(source.children[0]);
+            const auto skin = animation::Skin::Load(package, header, geometry, rig);
+            Check(skin.meshes[0][0].bones[0] == 0 && skin.meshes[0][0].bones[1] == 1,
+                  "Shared costume palette decoded incorrectly");
+            Check(Near(skin.meshes[0][0].weights[0], 191.f / 255) &&
+                      Near(skin.meshes[0][0].weights[1], 64.f / 255),
+                  "Appended skin weights decoded incorrectly");
+            rig.bones.resize(1);
+            Check(Rejects([&] { animation::Skin::Load(package, header, geometry, rig); }),
+                  "Shared rig with a missing palette bone was accepted");
+            rig = Rig();
+            Put32(package.rootChunks[0].children[1].children[0].children[1], 12, format & ~0x1000u);
+            Check(Rejects([&] { animation::Skin::Load(package, header, geometry, rig); }),
+                  "Unskinned layout was guessed to contain skin weights");
+        }
+}
 } // namespace
 int main()
 {
@@ -204,6 +261,7 @@ int main()
     {
         DecodeAndMapping();
         SkinningAndRotation();
+        SkinLayouts();
         std::puts("PASS: EOT packed keys, CRC mapping, bind pose, hierarchy cycles and CPU skinning");
     }
     catch (const std::exception &ex)
