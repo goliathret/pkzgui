@@ -2,96 +2,7 @@
 #include "model/model_preview.h"
 #include <algorithm>
 #include <cmath>
-#include <functional>
 #include <stdexcept>
-
-void ModelPreview::InitializeAnimations(const PKPackage &package, const CMChunkResourceHeader &resource)
-{
-    try
-    {
-        const CMChunk *hierarchy = nullptr;
-        int best = -1;
-        std::function<void(const CMChunk &)> findHierarchy = [&](const CMChunk &c) {
-            if (c.GetMaskedID() == Gen_PostLoadData)
-                return;
-            if (c.GetMaskedID() == GenSub_Resource)
-                if (const auto *h = c.FindChild(GenSub_ResourceHeader))
-                {
-                    CMChunkResourceHeader candidate(*h);
-                    if (candidate.GetResourceType() == kCMResourceType_Hierarchy &&
-                        candidate.GetCRC() == resource.GetCRC() &&
-                        candidate.GetQualityLevel() == resource.GetQualityLevel())
-                    {
-                        const auto language = candidate.GetLanguageMask();
-                        const auto wanted = resource.GetLanguageMask();
-                        const int score = language == wanted ? 2 : (language & wanted) ? 1 : -1;
-                        if (score > best)
-                        {
-                            hierarchy = &c;
-                            best = score;
-                        }
-                        else if (score >= 0 && score == best)
-                            throw std::runtime_error("Ambiguous hierarchy resource.");
-                    }
-                }
-            for (const auto &child : c.children)
-                findHierarchy(child);
-        };
-        for (const auto &root : package.rootChunks)
-            findHierarchy(root);
-        if (!hierarchy)
-            return;
-        animationSkeleton = animation::Skeleton::Load(*hierarchy, package.isLittleEndian);
-        if (!isHierarchy)
-        {
-            animationSkin = animation::Skin::Load(package, resource, geometry, *animationSkeleton);
-            bindGeometry = geometry;
-        }
-        size_t skipped = 0;
-        std::function<void(const CMChunk &)> findClips = [&](const CMChunk &c) {
-            if (c.GetMaskedID() == Gen_PostLoadData)
-                return;
-            if (c.GetMaskedID() == GenSub_Resource)
-                if (const auto *h = c.FindChild(GenSub_ResourceHeader))
-                    if (CMChunkResourceHeader(*h).GetResourceType() == kCMResourceType_HAnim)
-                    {
-                        try
-                        {
-                            auto clip = animation::Clip::Load(package, c, false);
-                            const auto map = clip.Map(*animationSkeleton);
-                            if (!map.empty() &&
-                                std::all_of(map.begin(), map.end(), [](int bone) { return bone >= 0; }))
-                            {
-                                animationChoices.push_back(std::move(clip));
-                                animationResources.push_back(&c);
-                            }
-                        }
-                        catch (const std::exception &)
-                        {
-                            ++skipped;
-                        }
-                    }
-            for (const auto &child : c.children)
-                findClips(child);
-        };
-        for (const auto &root : package.rootChunks)
-            findClips(root);
-        Log("Animation mapping: " + std::to_string(animationChoices.size()) + " bone-compatible clips for " +
-            std::to_string(animationSkeleton->bones.size()) +
-            " bones (CRC mapping; unmapped bones keep the bind pose).");
-        if (skipped)
-            Log("Skipped " + std::to_string(skipped) + " animation resources with invalid metadata.");
-    }
-    catch (const std::exception &ex)
-    {
-        animationSkeleton.reset();
-        animationSkin.reset();
-        bindGeometry.reset();
-        animationChoices.clear();
-        animationResources.clear();
-        Log("Animations unavailable: " + std::string(ex.what()));
-    }
-}
 
 void ModelPreview::SelectAnimation(size_t index)
 {
@@ -102,6 +13,10 @@ void ModelPreview::SelectAnimation(size_t index)
     selectedAnimation = int(index);
     animationTime = 0;
     animationPlaying = false;
+    animationGroundOffset = 0;
+    ApplyAnimation();
+    if (!isHierarchy)
+        animationGroundOffset = -geometry.Bounds().mMin.y;
     ApplyAnimation();
     Log("Animation " + animationClip->name + ": " + std::to_string(animationClip->tracks.size()) +
         " tracks mapped by bone CRC. Root motion and morph tracks are not applied.");
@@ -111,7 +26,10 @@ void ModelPreview::ApplyAnimation()
     if (!animationClip || !animationSkeleton)
         return;
     const auto pose = animationClip->Sample(*animationSkeleton, animationTime);
-    const auto world = animationSkeleton->WorldPose(pose);
+    auto world = animationSkeleton->WorldPose(pose);
+    if (animationGrounded)
+        for (auto &matrix : world)
+            matrix.m[13] += animationGroundOffset;
     if (isHierarchy)
     {
         bonePositions.clear();
@@ -125,6 +43,11 @@ void ModelPreview::ApplyAnimation()
     else if (animationSkin && bindGeometry)
         animationSkin->Apply(*animationSkeleton, world, *bindGeometry, geometry);
     renderDirty = true;
+}
+void ModelPreview::SetAnimationGrounded(bool enabled)
+{
+    animationGrounded = enabled;
+    ApplyAnimation();
 }
 void ModelPreview::SetAnimationTime(float time)
 {
@@ -177,6 +100,7 @@ void ModelPreview::ResetAnimation()
     animationTime = 0;
     selectedAnimation = -1;
     animationClip.reset();
+    animationGroundOffset = 0;
     if (bindGeometry)
         geometry.meshes = bindGeometry->meshes;
     if (isHierarchy && animationSkeleton)
@@ -193,23 +117,54 @@ void ModelPreview::ResetAnimation()
 }
 void ModelPreview::DrawAnimationControls()
 {
-    if (animationChoices.empty())
+    if (rigResources.empty())
         return;
     if (ImGui::Button("Animation..."))
         ImGui::OpenPopup("Animation playback");
     if (!ImGui::BeginPopup("Animation playback"))
         return;
-    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 28);
-    const char *current =
-        selectedAnimation < 0 ? "Bind pose" : animationChoices[size_t(selectedAnimation)].name.c_str();
-    if (ImGui::BeginCombo("##Animation clip", current))
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24);
+    const char *rig = selectedRig < 0 ? "Choose shared rig..." : rigNames[size_t(selectedRig)].c_str();
+    if (ImGui::BeginCombo("Rig", rig))
+    {
+        for (size_t i = 0; i < rigNames.size(); ++i)
+        {
+            ImGui::PushID(int(i));
+            if (ImGui::Selectable(rigNames[i].c_str(), selectedRig == int(i)))
+            {
+                try
+                {
+                    SelectAnimationRig(i);
+                }
+                catch (const std::exception &ex)
+                {
+                    Log("Animation rig: " + std::string(ex.what()));
+                }
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SetItemTooltip("Choose the shared character rig for costumes without a rig reference. "
+                          "Matching palette sizes alone cannot verify bone order.");
+    if (animationChoices.empty())
+    {
+        ImGui::TextDisabled(selectedRig < 0 ? "Choose the model's rig to find clips." : "No matching clips in this package.");
+        ImGui::EndPopup();
+        return;
+    }
+    auto label = [](const std::string &name) { return name.substr(0, name.find('#')); };
+    ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24);
+    const std::string current =
+        selectedAnimation < 0 ? "Bind pose" : label(animationChoices[size_t(selectedAnimation)].name);
+    if (ImGui::BeginCombo("Clip", current.c_str()))
     {
         if (ImGui::Selectable("Bind pose", selectedAnimation < 0))
             ResetAnimation();
         for (size_t i = 0; i < animationChoices.size(); ++i)
         {
             ImGui::PushID(int(i));
-            if (ImGui::Selectable(animationChoices[i].name.c_str(), selectedAnimation == int(i)))
+            if (ImGui::Selectable(label(animationChoices[i].name).c_str(), selectedAnimation == int(i)))
             {
                 try
                 {
@@ -220,6 +175,7 @@ void ModelPreview::DrawAnimationControls()
                     Log("Animation: " + std::string(ex.what()));
                 }
             }
+            ImGui::SetItemTooltip("%s", animationChoices[i].name.c_str());
             ImGui::PopID();
         }
         ImGui::EndCombo();
@@ -237,6 +193,13 @@ void ModelPreview::DrawAnimationControls()
         }
         ImGui::SameLine();
         ImGui::Checkbox("Loop", &animationLoop);
+        if (!isHierarchy)
+        {
+            bool grounded = animationGrounded;
+            if (ImGui::Checkbox("Ground start pose", &grounded))
+                SetAnimationGrounded(grounded);
+            ImGui::SetItemTooltip("Offset the first pose to the grid. Later movement is preserved; disable to see original coordinates.");
+        }
         ImGui::BeginDisabled(!animationClip);
         float time = animationTime;
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22);
