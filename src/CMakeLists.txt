@@ -38,8 +38,7 @@ if(APPLE OR WIN32)
 endif()
 
 add_library(pkzgui_lib STATIC
-    animation/animation.cpp
-    animation/skinning.cpp
+    animation/animation_placement.cpp
     animation/rig_mapping.cpp
     animation/model_animation.cpp
     app/app_menu.cpp

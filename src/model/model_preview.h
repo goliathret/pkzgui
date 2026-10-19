@@ -1,6 +1,7 @@
 #pragma once
 #include "model/model_renderer.h"
-#include "animation/animation.h"
+#include "animation/animation_placement.h"
+#include "Resource/RZGeometrySkin.h"
 #include "package/package_session.h"
 #include "Resource/RZGeometry.h"
 #include <cstdint>
@@ -34,12 +35,12 @@ public:
     void ApplyRetexture(PackageSession& session, size_t material);
     void ApplyMaterialFlags(PackageSession& session, size_t material, uint32_t flags);
     void ExportGeometryObj(const std::string& path) const;
-    size_t AnimationRigCount() const { return rigNames.size(); }
-    const std::string& AnimationRigName(size_t index) const { return rigNames.at(index); }
+    size_t AnimationRigCount() const { return animationRigs.size(); }
+    const std::string& AnimationRigName(size_t index) const { return animationRigs.at(index).name; }
     void SelectAnimationRig(size_t index);
     void SetAnimationGrounded(bool enabled);
     size_t AnimationCount() const { return animationChoices.size(); }
-    const std::string& AnimationName(size_t index) const { return animationChoices.at(index).name; }
+    const std::string& AnimationName(size_t index) const { return animationChoices.at(index).clip.name; }
     void SelectAnimation(size_t index);
     void SetAnimationTime(float time);
     void SetAnimationPlaying(bool play);
@@ -72,7 +73,7 @@ private:
     };
 
     void Load(const PKPackage& package, const CMChunkResourceHeader& resource);
-    void LoadHierarchy(const PKPackage& package, const CMChunkResourceHeader& resource, const CMChunk* selected);
+    void LoadHierarchy(const PKPackage& package, const CMChunkResourceHeader& resource);
     void HandleCameraInput(bool blocked);
     void RenderFrame(int width, int height);
     std::vector<ModelRenderer::MeshStyle> MeshStyles();
@@ -88,7 +89,7 @@ private:
     void DrawShaderExport(GLFWwindow* window, size_t index);
     void Log(std::string message);
     void InitializeAnimations(const PKPackage& package, const CMChunkResourceHeader& resource);
-    void ApplyAnimation(bool calibrate = false);
+    void ApplyAnimation();
     void DrawAnimationControls();
 
     SelectionKey shown;
@@ -105,17 +106,20 @@ private:
     std::vector<uint32_t> boneParents;
     std::vector<std::string> boneNames;
     size_t boneCount = 0;
-    std::vector<const CMChunk*> rigResources;
-    std::vector<std::string> rigNames;
+    struct AnimationChoice
+    {
+        RZHAnim clip;
+        const CMChunk* resource;
+    };
+    std::vector<RZHierarchy> animationRigs;
     int selectedRig = -1;
-    Mat4 animationPlacement;
+    BUMatrix animationPlacement;
     bool animationGrounded = true;
-    std::optional<animation::Skeleton> animationSkeleton;
-    std::optional<animation::Skin> animationSkin;
+    std::optional<RZHierarchy> animationSkeleton;
+    std::optional<RZGeometrySkin> animationSkin;
     std::optional<RZGeometry> bindGeometry;
-    std::vector<animation::Clip> animationChoices;
-    std::vector<const CMChunk*> animationResources;
-    std::optional<animation::Clip> animationClip;
+    std::vector<AnimationChoice> animationChoices;
+    std::optional<RZHAnim> animationClip;
     float animationTime = 0;
     int selectedAnimation = -1;
     bool animationPlaying = false, animationLoop = true;

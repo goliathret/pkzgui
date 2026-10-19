@@ -106,7 +106,7 @@ bool ModelPreview::DrawOverlay(const ImVec2& origin, const ImVec2& area)
     const float fontSize = ImGui::GetFontSize();
     const bool compact = area.x < fontSize * 16 || area.y < ImGui::GetFrameHeightWithSpacing() * 4;
     const bool collapsed = overlayCollapsed && !compact;
-    const int rows = compact || collapsed ? 1 : (3 + !rigResources.empty() + !materials.empty());
+    const int rows = compact || collapsed ? 1 : (3 + !animationRigs.empty() + !materials.empty());
     const ImVec2 size(std::min(area.x - kOverlayPadding * 2, fontSize * (collapsed ? 10 : 18)),
         std::min(area.y - kOverlayPadding * 2, (ImGui::GetFrameHeight() + 3) * rows + kOverlayPadding * 2));
     const ImVec2 position(origin.x + area.x - size.x - kOverlayPadding, origin.y + area.y - size.y - kOverlayPadding);
