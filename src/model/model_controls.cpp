@@ -135,7 +135,8 @@ bool ModelPreview::DrawOverlay(const ImVec2& origin, const ImVec2& area)
 
     const bool capturesInput =
         ImGui::IsMouseHoveringRect(position, ImVec2(position.x + size.x, position.y + size.y)) ||
-        ImGui::IsPopupOpen(kAdjustmentsPopup) || ImGui::IsPopupOpen(kViewControlsPopup);
+        ImGui::IsPopupOpen(kAdjustmentsPopup) || ImGui::IsPopupOpen(kViewControlsPopup) ||
+        ImGui::IsPopupOpen("Animation playback");
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
     ImGui::PopStyleColor();
@@ -167,6 +168,7 @@ void ModelPreview::DrawOverlayControls(bool collapsed, bool insidePopup)
         camera.Frame(geometry.Bounds());
         renderDirty = true;
     }
+    DrawAnimationControls();
     if (materials.empty())
         return;
 

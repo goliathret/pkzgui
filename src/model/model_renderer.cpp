@@ -576,7 +576,27 @@ void ModelRenderer::UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes)
         gpu.normals = UploadAttribute(kNormalAttribute, mesh.normals, 3);
         gpu.texcoords = UploadAttribute(kTexCoordAttribute, mesh.texcoords, 2);
         gpu.indices = UploadBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
+        gpu.vertexCount = mesh.VertexCount();
         gpuMeshes.push_back(gpu);
+    }
+}
+
+void ModelRenderer::UpdateVertices(const std::vector<RZGeometry::Mesh>& meshes)
+{
+    if (gpuMeshes.empty())
+        return;
+    if (meshes.size() != gpuMeshes.size())
+        throw std::runtime_error("Animated mesh count changed.");
+    const GLStateGuard savedState;
+    for (size_t i = 0; i < meshes.size(); ++i)
+    {
+        const auto& mesh = meshes[i];
+        if (mesh.VertexCount() != gpuMeshes[i].vertexCount || mesh.normals.size() != mesh.positions.size())
+            throw std::runtime_error("Animated vertex layout changed.");
+        gl3::BindBuffer(GL_ARRAY_BUFFER, gpuMeshes[i].positions);
+        gl3::BufferSubData(GL_ARRAY_BUFFER, 0, mesh.positions.size() * sizeof(float), mesh.positions.data());
+        gl3::BindBuffer(GL_ARRAY_BUFFER, gpuMeshes[i].normals);
+        gl3::BufferSubData(GL_ARRAY_BUFFER, 0, mesh.normals.size() * sizeof(float), mesh.normals.data());
     }
 }
 
