@@ -13,23 +13,23 @@ void ModelPreview::SelectAnimation(size_t index)
     selectedAnimation = int(index);
     animationTime = 0;
     animationPlaying = false;
-    animationGroundOffset = 0;
-    ApplyAnimation();
+    animationPlacement = animationClip->PreviewPlacement(*animationSkeleton);
+    ApplyAnimation(true);
     if (!isHierarchy)
-        animationGroundOffset = -geometry.Bounds().mMin.y;
+        animationPlacement.m[13] -= geometry.Bounds().mMin.y;
     ApplyAnimation();
     Log("Animation " + animationClip->name + ": " + std::to_string(animationClip->tracks.size()) +
         " tracks mapped by bone CRC. Root motion and morph tracks are not applied.");
 }
-void ModelPreview::ApplyAnimation()
+void ModelPreview::ApplyAnimation(bool calibrate)
 {
     if (!animationClip || !animationSkeleton)
         return;
     const auto pose = animationClip->Sample(*animationSkeleton, animationTime);
     auto world = animationSkeleton->WorldPose(pose);
-    if (animationGrounded)
+    if (animationGrounded || calibrate)
         for (auto &matrix : world)
-            matrix.m[13] += animationGroundOffset;
+            matrix = animationPlacement * matrix;
     if (isHierarchy)
     {
         bonePositions.clear();
@@ -100,7 +100,7 @@ void ModelPreview::ResetAnimation()
     animationTime = 0;
     selectedAnimation = -1;
     animationClip.reset();
-    animationGroundOffset = 0;
+    animationPlacement = Mat4{};
     if (bindGeometry)
         geometry.meshes = bindGeometry->meshes;
     if (isHierarchy && animationSkeleton)
@@ -196,9 +196,10 @@ void ModelPreview::DrawAnimationControls()
         if (!isHierarchy)
         {
             bool grounded = animationGrounded;
-            if (ImGui::Checkbox("Ground start pose", &grounded))
+            if (ImGui::Checkbox("Align to grid", &grounded))
                 SetAnimationGrounded(grounded);
-            ImGui::SetItemTooltip("Offset the first pose to the grid. Later movement is preserved; disable to see original coordinates.");
+            ImGui::SetItemTooltip("Remove the initial scene position and rotation, then ground the first pose. "
+                                  "Later movement is preserved; disable to see original coordinates.");
         }
         ImGui::BeginDisabled(!animationClip);
         float time = animationTime;

@@ -785,7 +785,7 @@ void ModelPreview::Clear()
     rigResources.clear();
     rigNames.clear();
     selectedRig = -1;
-    animationGroundOffset = 0;
+    animationPlacement = Mat4{};
     animationSkeleton.reset();
     animationSkin.reset();
     bindGeometry.reset();

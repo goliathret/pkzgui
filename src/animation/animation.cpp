@@ -255,6 +255,22 @@ Mat4 Transform::Matrix() const
     m.m[14] = translation[2];
     return m;
 }
+Mat4 Transform::InverseMatrix() const
+{
+    Transform inverse;
+    inverse.rotation = {-rotation[0], -rotation[1], -rotation[2], rotation[3]};
+    Mat4 result = inverse.Matrix();
+    for (int row = 0; row < 3; ++row)
+    {
+        if (!std::isfinite(scale[row]) || std::abs(scale[row]) < 1e-8f)
+            throw std::runtime_error("Cannot align an animation with a singular root scale.");
+        for (int column = 0; column < 3; ++column)
+            result.m[column * 4 + row] /= scale[row];
+        result.m[12 + row] = -(result.m[row] * translation[0] + result.m[4 + row] * translation[1] +
+                               result.m[8 + row] * translation[2]);
+    }
+    return result;
+}
 Skeleton Skeleton::Load(const CMChunk &resource, bool little)
 {
     const auto *header = resource.FindChild(GenSub_ResourceHeader);
@@ -417,6 +433,21 @@ std::vector<int> Clip::Map(const Skeleton &skeleton) const
         map.push_back(it == bones.end() ? -1 : it->second);
     }
     return map;
+}
+Mat4 Clip::PreviewPlacement(const Skeleton &skeleton) const
+{
+    size_t root = skeleton.bones.size();
+    for (size_t i = 0; i < skeleton.bones.size(); ++i)
+        if (skeleton.bones[i].parent == UINT32_MAX)
+        {
+            if (root != skeleton.bones.size())
+                return Mat4{}; // Multiple independent roots have no single actor placement.
+            root = i;
+        }
+    if (root == skeleton.bones.size())
+        return Mat4{};
+    const auto first = Sample(skeleton, 0);
+    return skeleton.bones[root].bind.Matrix() * first[root].InverseMatrix();
 }
 std::vector<Transform> Clip::Sample(const Skeleton &skeleton, float time) const
 {
