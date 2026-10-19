@@ -102,6 +102,18 @@ Skin Skin::Load(const PKPackage &package, const CMChunkResourceHeader &header, c
                     if (e.usage == 1)
                         weights = &e;
                 }
+        CMChunkMaterialInfo::VertexElement packedIndices, packedWeights;
+        const uint32_t baseFormat = format & 0xFFF;
+        if (!indices && !weights && (format & 0x1000) &&
+            ((baseFormat == 0x603 && stride == 24) || (baseFormat == 0x627 && stride == 32)))
+        {
+            // Some passes only declare the unskinned inputs; EOT appends two UBYTE4 skin fields.
+            packedIndices.offset = uint16_t(stride - 8);
+            packedWeights.offset = uint16_t(stride - 4);
+            packedIndices.type = packedWeights.type = 6;
+            indices = &packedIndices;
+            weights = &packedWeights;
+        }
         if (!indices || !weights || indices->GetFormat() != 6 || weights->GetFormat() != 6 ||
             indices->offset > stride || 4 > stride - indices->offset || weights->offset > stride ||
             4 > stride - weights->offset)
