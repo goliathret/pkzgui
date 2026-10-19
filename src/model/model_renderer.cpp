@@ -587,12 +587,17 @@ void ModelRenderer::UpdateVertices(const std::vector<RZGeometry::Mesh>& meshes)
         return;
     if (meshes.size() != gpuMeshes.size())
         throw std::runtime_error("Animated mesh count changed.");
+    for (size_t i = 0; i < meshes.size(); ++i)
+    {
+        const auto& mesh = meshes[i];
+        if (mesh.positions.size() != gpuMeshes[i].vertexCount * 3 ||
+            mesh.normals.size() != mesh.positions.size())
+            throw std::runtime_error("Animated vertex layout changed.");
+    }
     const GLStateGuard savedState;
     for (size_t i = 0; i < meshes.size(); ++i)
     {
         const auto& mesh = meshes[i];
-        if (mesh.VertexCount() != gpuMeshes[i].vertexCount || mesh.normals.size() != mesh.positions.size())
-            throw std::runtime_error("Animated vertex layout changed.");
         gl3::BindBuffer(GL_ARRAY_BUFFER, gpuMeshes[i].positions);
         gl3::BufferSubData(GL_ARRAY_BUFFER, 0, mesh.positions.size() * sizeof(float), mesh.positions.data());
         gl3::BindBuffer(GL_ARRAY_BUFFER, gpuMeshes[i].normals);

@@ -713,6 +713,7 @@ namespace
         for (unsigned id = 1; id < 64; ++id) if (gl.isBuffer(id)) after.insert(id);
         Check(after == buffers, "Animation reallocated GPU buffers");
         meshes[0].positions.push_back(0);
+        meshes[0].normals.push_back(0);
         Check(Throws([&] { renderer.UpdateVertices(meshes); }), "Animation accepted a changed vertex layout");
         renderer.Release();
         for (unsigned id : buffers) Check(!gl.isBuffer(id), "Animation buffers leaked on shutdown");
