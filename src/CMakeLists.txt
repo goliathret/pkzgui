@@ -38,6 +38,8 @@ if(APPLE OR WIN32)
 endif()
 
 add_library(pkzgui_lib STATIC
+    animation/animation.cpp
+    animation/skinning.cpp
     app/app_menu.cpp
     app/application.cpp
     audio/audio.cpp
@@ -89,6 +91,9 @@ if(PKZGUI_BUILD_TESTS)
 
     pkzgui_test(audio_sample_test)
     add_test(NAME audio_sample COMMAND audio_sample_test)
+
+    pkzgui_test(animation_test)
+    add_test(NAME animation COMMAND animation_test)
 
     pkzgui_test(file_dialog_test)
     add_test(NAME file_dialog COMMAND file_dialog_test "${CMAKE_CURRENT_BINARY_DIR}/test-dialogs")
