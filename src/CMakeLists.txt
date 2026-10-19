@@ -40,6 +40,7 @@ endif()
 add_library(pkzgui_lib STATIC
     animation/animation.cpp
     animation/skinning.cpp
+    animation/model_animation.cpp
     app/app_menu.cpp
     app/application.cpp
     audio/audio.cpp

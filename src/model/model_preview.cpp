@@ -438,6 +438,7 @@ void ModelPreview::Update(const PackageSession& session)
                 std::to_string(vertexCount) + " vertices, " + std::to_string(triangleCount) +
                 " triangles (static preview).");
         }
+        InitializeAnimations(*key.package, *resource);
     }
     catch (const std::exception& ex)
     {
@@ -775,6 +776,15 @@ void ModelPreview::Clear()
     boneNames.clear();
     boneCount = 0;
     isHierarchy = false;
+    animationPlaying = false;
+    animationTime = 0;
+    selectedAnimation = -1;
+    animationClip.reset();
+    animationChoices.clear();
+    animationResources.clear();
+    animationSkeleton.reset();
+    animationSkin.reset();
+    bindGeometry.reset();
     shown = {};
     active = false;
     name.clear();
@@ -791,6 +801,12 @@ void ModelPreview::Draw()
     {
         ImGui::TextDisabled("Preview unavailable. See Debug log.");
         return;
+    }
+    try { AdvanceAnimation(ImGui::GetIO().DeltaTime); }
+    catch (const std::exception& ex)
+    {
+        animationPlaying = false;
+        Log("Animation: " + std::string(ex.what()));
     }
     const ImVec2 available = ImGui::GetContentRegionAvail();
     if (available.x < 32 || available.y < 32)
@@ -1158,6 +1174,7 @@ void ModelPreview::RenderFrame(int width, int height)
         return;
     }
     const auto styles = MeshStyles();
+    if (animationSkin) renderer.UpdateVertices(geometry.meshes);
     renderer.Render(geometry.meshes, styles, camera, twoSided, width, height);
 }
 

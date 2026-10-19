@@ -1,5 +1,6 @@
 #pragma once
 #include "model/model_renderer.h"
+#include "animation/animation.h"
 #include "package/package_session.h"
 #include "Resource/RZGeometry.h"
 #include <cstdint>
@@ -33,6 +34,15 @@ public:
     void ApplyRetexture(PackageSession& session, size_t material);
     void ApplyMaterialFlags(PackageSession& session, size_t material, uint32_t flags);
     void ExportGeometryObj(const std::string& path) const;
+    size_t AnimationCount() const { return animationChoices.size(); }
+    const std::string& AnimationName(size_t index) const { return animationChoices.at(index).name; }
+    void SelectAnimation(size_t index);
+    void SetAnimationTime(float time);
+    void SetAnimationPlaying(bool play);
+    void ResetAnimation();
+    void AdvanceAnimation(float seconds);
+    float AnimationTime() const { return animationTime; }
+    bool AnimationPlaying() const { return animationPlaying; }
 
     bool IsActive() const { return active; }
     const std::string& Name() const { return name; }
@@ -73,6 +83,9 @@ private:
     void DrawGeometryIO(PackageSession& session, GLFWwindow* window);
     void DrawShaderExport(GLFWwindow* window, size_t index);
     void Log(std::string message);
+    void InitializeAnimations(const PKPackage& package, const CMChunkResourceHeader& resource);
+    void ApplyAnimation();
+    void DrawAnimationControls();
 
     SelectionKey shown;
     bool active = false;
@@ -88,6 +101,15 @@ private:
     std::vector<uint32_t> boneParents;
     std::vector<std::string> boneNames;
     size_t boneCount = 0;
+    std::optional<animation::Skeleton> animationSkeleton;
+    std::optional<animation::Skin> animationSkin;
+    std::optional<RZGeometry> bindGeometry;
+    std::vector<animation::Clip> animationChoices;
+    std::vector<const CMChunk*> animationResources;
+    std::optional<animation::Clip> animationClip;
+    float animationTime = 0;
+    int selectedAnimation = -1;
+    bool animationPlaying = false, animationLoop = true;
 
     ModelRenderer renderer;
     OrbitCamera camera;

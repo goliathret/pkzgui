@@ -72,6 +72,7 @@ public:
         const OrbitCamera& camera, bool twoSided, int width, int height);
     void RenderSkeleton(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents,
         const OrbitCamera& camera, int width, int height);
+    void UpdateVertices(const std::vector<RZGeometry::Mesh>& meshes);
     Texture UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, bool clampToEdge = false);
     void DeleteTexture(Texture& texture);
     void Release();
@@ -87,6 +88,7 @@ private:
         unsigned int normals = 0;
         unsigned int texcoords = 0;
         unsigned int indices = 0;
+        size_t vertexCount = 0;
     };
 
     void EnsureProgram();

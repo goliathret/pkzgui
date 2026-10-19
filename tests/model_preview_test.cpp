@@ -674,6 +674,50 @@ namespace
         }
     }
 
+    void AnimatedBufferTests(GLHarness& gl)
+    {
+        ModelRenderer renderer;
+        renderer.drawNoTex = true;
+        std::vector<RZGeometry::Mesh> meshes(1);
+        meshes[0].positions = {-1, 0, 0, 1, 0, 0, 0, 2, 0};
+        meshes[0].normals = {0, 0, 1, 0, 0, 1, 0, 0, 1};
+        meshes[0].texcoords.resize(6);
+        meshes[0].indices = {0, 1, 2};
+        OrbitCamera camera;
+        camera.yaw = 0;
+        camera.pitch = 0;
+        camera.target = BUVector3(0, 1, 0);
+        camera.distance = 5;
+        std::vector<ModelRenderer::MeshStyle> styles(1);
+        styles[0].color[0] = 1;
+        styles[0].color[1] = styles[0].color[2] = 0;
+        renderer.Render(meshes, styles, camera, true, 128, 128);
+        const auto redPixels = [&] {
+            const GLStateGuard saved;
+            std::array<uint8_t, 128 * 128 * 4> pixels{};
+            glBindTexture(GL_TEXTURE_2D, renderer.FrameTexture());
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            size_t count = 0;
+            for (size_t i = 0; i < pixels.size(); i += 4)
+                if (pixels[i] > pixels[i + 1] + 40 && pixels[i] > pixels[i + 2] + 40) ++count;
+            return count;
+        };
+        Check(redPixels() > 100, "Animated buffer fixture is not visible");
+        std::set<unsigned> buffers;
+        for (unsigned id = 1; id < 64; ++id) if (gl.isBuffer(id)) buffers.insert(id);
+        for (size_t i = 0; i < meshes[0].positions.size(); i += 3) meshes[0].positions[i] += 50;
+        renderer.UpdateVertices(meshes);
+        renderer.Render(meshes, styles, camera, true, 128, 128);
+        Check(redPixels() == 0, "Updated animation vertices were not uploaded");
+        std::set<unsigned> after;
+        for (unsigned id = 1; id < 64; ++id) if (gl.isBuffer(id)) after.insert(id);
+        Check(after == buffers, "Animation reallocated GPU buffers");
+        meshes[0].positions.push_back(0);
+        Check(Throws([&] { renderer.UpdateVertices(meshes); }), "Animation accepted a changed vertex layout");
+        renderer.Release();
+        for (unsigned id : buffers) Check(!gl.isBuffer(id), "Animation buffers leaked on shutdown");
+    }
+
     int GLTests()
     {
         if (!glfwInit())
@@ -689,6 +733,7 @@ namespace
                 UntexturedRenderTests(gl);
                 TexturedRenderTests(gl);
                 MultisampleFallbackTests(gl);
+                AnimatedBufferTests(gl);
                 std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured "
                           "rendering, PNG preview/reset/apply, MSAA fallback and shutdown cleanup");
             }

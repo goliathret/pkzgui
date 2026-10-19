@@ -134,6 +134,7 @@ namespace gl3
     X(void, GenBuffers, (GLsizei, GLuint*)) \
     X(void, BindBuffer, (GLenum, GLuint)) \
     X(void, BufferData, (GLenum, SizeIPtr, const void*, GLenum)) \
+    X(void, BufferSubData, (GLenum, SizeIPtr, SizeIPtr, const void*)) \
     X(void, DeleteBuffers, (GLsizei, const GLuint*)) \
     X(void, EnableVertexAttribArray, (GLuint)) \
     X(void, VertexAttribPointer, (GLuint, GLint, GLenum, GLboolean, GLsizei, const void*)) \
