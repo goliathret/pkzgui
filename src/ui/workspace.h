@@ -4,6 +4,7 @@
 #include "hud/hud_preview.h"
 #include "model/model_preview.h"
 #include "package/package_session.h"
+#include "package/package_search.h"
 #include "texture/texture.h"
 #include "ui/widgets.h"
 #include <optional>
@@ -78,6 +79,10 @@ private:
     DebugLog log;
     PaneSizes panes;
 
+    PackageSearch packageSearch;
+    SelectionKey searchKey;
+    char searchText[256] = {};
+    bool focusSearch = false;
     SelectionKey refreshed;
     std::optional<CMChunkResourceHeader> resource;
     std::optional<RZAudioSample> audio;

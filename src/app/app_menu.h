@@ -10,6 +10,7 @@ enum class Command
     OpenPackage,
     Save,
     SaveAs,
+    FindPackage,
     ExtractTexture,
     ReplaceTexture,
     ExtractAudio,

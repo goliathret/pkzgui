@@ -203,6 +203,8 @@ Command Application::PollShortcuts() const
         return Command::OpenPackage;
     if (ImGui::IsKeyPressed(ImGuiKey_S, false))
         return Command::Save;
+    if (ImGui::IsKeyPressed(ImGuiKey_F, false))
+        return Command::FindPackage;
     return Command::None;
 }
 

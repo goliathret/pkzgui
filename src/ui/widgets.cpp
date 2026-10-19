@@ -1,35 +1,10 @@
 #include "ui/widgets.h"
-#include "Resource/ResourceHeader.h"
+#include "package/package_search.h"
 #include <cstdio>
 #include <utility>
 
 namespace
 {
-    std::string ResourceName(const CMChunk& chunk)
-    {
-        if (chunk.GetMaskedID() != GenSub_Resource)
-            return {};
-        const CMChunk* header = chunk.FindChild(GenSub_ResourceHeader);
-        if (!header)
-            return {};
-        try
-        {
-            return CMChunkResourceHeader(*header).GetName();
-        }
-        catch (const std::exception&)
-        {
-            return {};
-        }
-    }
-
-    std::string ChunkLabel(const CMChunk& chunk)
-    {
-        if (std::string name = ResourceName(chunk); !name.empty())
-            return name;
-        return ToString(chunk.GetIDToEnum()) + " [" + HexString(chunk.GetMaskedID()) + "] v" + std::to_string(chunk.version) +
-            (chunk.GetHasChildren() ? " folder " : " leaf ") + std::to_string(chunk.length);
-    }
-
     void DrawChunk(const CMChunk& chunk, const CMChunk*& selected, bool root)
     {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -40,7 +15,7 @@ namespace
         if (&chunk == selected)
             flags |= ImGuiTreeNodeFlags_Selected;
 
-        const bool open = ImGui::TreeNodeEx(&chunk, flags, "%s", ChunkLabel(chunk).c_str());
+        const bool open = ImGui::TreeNodeEx(&chunk, flags, "%s", PackageChunkLabel(chunk).c_str());
         if (ImGui::IsItemClicked())
             selected = &chunk;
         if (!open || chunk.children.empty())
