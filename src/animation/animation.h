@@ -15,6 +15,7 @@ struct Transform
     Value rotation{0, 0, 0, 1};
     Value scale{1, 1, 1, 0};
     Mat4 Matrix() const;
+    Mat4 InverseMatrix() const;
 };
 struct Bone
 {
@@ -51,6 +52,7 @@ struct Clip
     static Clip Load(const PKPackage &package, const CMChunk &resource, bool decode = true);
     std::vector<int> Map(const Skeleton &skeleton) const;
     std::vector<Transform> Sample(const Skeleton &skeleton, float time) const;
+    Mat4 PreviewPlacement(const Skeleton &skeleton) const;
 };
 struct Influence
 {

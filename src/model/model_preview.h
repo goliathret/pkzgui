@@ -88,7 +88,7 @@ private:
     void DrawShaderExport(GLFWwindow* window, size_t index);
     void Log(std::string message);
     void InitializeAnimations(const PKPackage& package, const CMChunkResourceHeader& resource);
-    void ApplyAnimation();
+    void ApplyAnimation(bool calibrate = false);
     void DrawAnimationControls();
 
     SelectionKey shown;
@@ -108,7 +108,7 @@ private:
     std::vector<const CMChunk*> rigResources;
     std::vector<std::string> rigNames;
     int selectedRig = -1;
-    float animationGroundOffset = 0;
+    Mat4 animationPlacement;
     bool animationGrounded = true;
     std::optional<animation::Skeleton> animationSkeleton;
     std::optional<animation::Skin> animationSkin;
