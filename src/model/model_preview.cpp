@@ -782,6 +782,10 @@ void ModelPreview::Clear()
     animationClip.reset();
     animationChoices.clear();
     animationResources.clear();
+    rigResources.clear();
+    rigNames.clear();
+    selectedRig = -1;
+    animationGroundOffset = 0;
     animationSkeleton.reset();
     animationSkin.reset();
     bindGeometry.reset();

@@ -34,6 +34,10 @@ public:
     void ApplyRetexture(PackageSession& session, size_t material);
     void ApplyMaterialFlags(PackageSession& session, size_t material, uint32_t flags);
     void ExportGeometryObj(const std::string& path) const;
+    size_t AnimationRigCount() const { return rigNames.size(); }
+    const std::string& AnimationRigName(size_t index) const { return rigNames.at(index); }
+    void SelectAnimationRig(size_t index);
+    void SetAnimationGrounded(bool enabled);
     size_t AnimationCount() const { return animationChoices.size(); }
     const std::string& AnimationName(size_t index) const { return animationChoices.at(index).name; }
     void SelectAnimation(size_t index);
@@ -101,6 +105,11 @@ private:
     std::vector<uint32_t> boneParents;
     std::vector<std::string> boneNames;
     size_t boneCount = 0;
+    std::vector<const CMChunk*> rigResources;
+    std::vector<std::string> rigNames;
+    int selectedRig = -1;
+    float animationGroundOffset = 0;
+    bool animationGrounded = true;
     std::optional<animation::Skeleton> animationSkeleton;
     std::optional<animation::Skin> animationSkin;
     std::optional<RZGeometry> bindGeometry;
