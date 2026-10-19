@@ -932,6 +932,7 @@ std::vector<ModelRenderer::MeshStyle> ModelPreview::MeshStyles()
         const bool hasMaterial = mesh.material < geometry.materials.size();
         ModelRenderer::MeshStyle& style = styles[i];
         style.texture = textured && mesh.hasUV ? MaterialTexture(mesh.material) : 0;
+        style.visible = !textured || style.texture != 0 || renderer.drawNoTex;
         style.uvDivisor = mesh.integerUV ? uvDivisor : 1.0f;
         style.alphaCutout = hasMaterial && materials[mesh.material].alphaCutout;
         const float* color = style.texture && hasMaterial ? geometry.materials[mesh.material].color
