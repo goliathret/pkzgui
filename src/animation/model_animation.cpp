@@ -6,29 +6,36 @@
 
 void ModelPreview::SelectAnimation(size_t index)
 {
-    if (!shown.package || !animationSkeleton || index >= animationResources.size())
+    if (!shown.package || !animationSkeleton || index >= animationChoices.size())
         throw std::runtime_error("Select a compatible animation first.");
-    auto clip = animation::Clip::Load(*shown.package, *animationResources[index]);
+    auto clip = RZHAnim::Load(*shown.package, *animationChoices[index].resource);
+    auto placement = AnimationPreviewPlacement(clip, *animationSkeleton);
+    if (animationSkin && bindGeometry)
+    {
+        auto world = animationSkeleton->WorldPose(clip.Sample(*animationSkeleton, 0));
+        for (auto& matrix : world)
+            matrix = placement * matrix;
+        auto firstPose = *bindGeometry;
+        animationSkin->Apply(*animationSkeleton, world, *bindGeometry, firstPose);
+        placement.m[3][1] -= firstPose.Bounds().mMin.y;
+    }
     animationClip = std::move(clip);
+    animationPlacement = placement;
     selectedAnimation = int(index);
     animationTime = 0;
     animationPlaying = false;
-    animationPlacement = animationClip->PreviewPlacement(*animationSkeleton);
-    ApplyAnimation(true);
-    if (!isHierarchy)
-        animationPlacement.m[13] -= geometry.Bounds().mMin.y;
     ApplyAnimation();
     Log("Animation " + animationClip->name + ": " + std::to_string(animationClip->tracks.size()) +
-        " tracks mapped by bone CRC. Root motion and morph tracks are not applied.");
+        " tracks mapped by bone CRC. Actor displacement and morph channels are not emulated.");
 }
-void ModelPreview::ApplyAnimation(bool calibrate)
+void ModelPreview::ApplyAnimation()
 {
     if (!animationClip || !animationSkeleton)
         return;
     const auto pose = animationClip->Sample(*animationSkeleton, animationTime);
     auto world = animationSkeleton->WorldPose(pose);
-    if (animationGrounded || calibrate)
-        for (auto &matrix : world)
+    if (animationGrounded)
+        for (auto& matrix : world)
             matrix = animationPlacement * matrix;
     if (isHierarchy)
     {
@@ -36,7 +43,7 @@ void ModelPreview::ApplyAnimation(bool calibrate)
         boneParents.clear();
         for (size_t i = 0; i < world.size(); ++i)
         {
-            bonePositions.emplace_back(world[i].m[12], world[i].m[13], world[i].m[14]);
+            bonePositions.emplace_back(world[i].m[3][0], world[i].m[3][1], world[i].m[3][2]);
             boneParents.push_back(animationSkeleton->bones[i].parent);
         }
     }
@@ -53,7 +60,7 @@ void ModelPreview::SetAnimationTime(float time)
 {
     if (!animationClip || !std::isfinite(time))
         throw std::runtime_error("No animation or invalid sample time.");
-    animationTime = std::clamp(time, 0.f, animationClip->duration);
+    animationTime = std::clamp(time, 0.f, animationClip->info.duration);
     ApplyAnimation();
 }
 void ModelPreview::SetAnimationPlaying(bool play)
@@ -64,16 +71,16 @@ void ModelPreview::SetAnimationPlaying(bool play)
             return;
         size_t choice = 0;
         for (size_t i = 0; i < animationChoices.size(); ++i)
-            if (animationChoices[i].name.find("Idle") != std::string::npos)
+            if (animationChoices[i].clip.name.find("Idle") != std::string::npos)
             {
                 choice = i;
                 break;
             }
         SelectAnimation(choice);
     }
-    if (play && animationClip && animationTime >= animationClip->duration)
+    if (play && animationClip && animationTime >= animationClip->info.duration)
         SetAnimationTime(0);
-    animationPlaying = play && animationClip && animationClip->duration > 0;
+    animationPlaying = play && animationClip && animationClip->info.duration > 0;
 }
 void ModelPreview::AdvanceAnimation(float seconds)
 {
@@ -82,13 +89,13 @@ void ModelPreview::AdvanceAnimation(float seconds)
     if (!std::isfinite(seconds) || seconds < 0)
         throw std::runtime_error("Invalid animation time step.");
     float next = animationTime + seconds;
-    if (next >= animationClip->duration)
+    if (next >= animationClip->info.duration)
     {
         if (animationLoop)
-            next = std::fmod(next, animationClip->duration);
+            next = std::fmod(next, animationClip->info.duration);
         else
         {
-            next = animationClip->duration;
+            next = animationClip->info.duration;
             animationPlaying = false;
         }
     }
@@ -100,43 +107,44 @@ void ModelPreview::ResetAnimation()
     animationTime = 0;
     selectedAnimation = -1;
     animationClip.reset();
-    animationPlacement = Mat4{};
+    animationPlacement = BUMatrix{};
     if (bindGeometry)
         geometry.meshes = bindGeometry->meshes;
     if (isHierarchy && animationSkeleton)
     {
-        std::vector<animation::Transform> bind;
-        for (const auto &bone : animationSkeleton->bones)
+        std::vector<CMTransforms> bind;
+        for (const auto& bone : animationSkeleton->bones)
             bind.push_back(bone.bind);
         const auto world = animationSkeleton->WorldPose(bind);
         bonePositions.clear();
-        for (const auto &matrix : world)
-            bonePositions.emplace_back(matrix.m[12], matrix.m[13], matrix.m[14]);
+        for (const auto& matrix : world)
+            bonePositions.emplace_back(matrix.m[3][0], matrix.m[3][1], matrix.m[3][2]);
     }
     renderDirty = true;
 }
 void ModelPreview::DrawAnimationControls()
 {
-    if (rigResources.empty())
+    if (animationRigs.empty())
         return;
     if (ImGui::Button("Animation..."))
         ImGui::OpenPopup("Animation playback");
     if (!ImGui::BeginPopup("Animation playback"))
         return;
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24);
-    const char *rig = selectedRig < 0 ? "Choose shared rig..." : rigNames[size_t(selectedRig)].c_str();
+    const char* rig =
+        selectedRig < 0 ? "Choose shared rig..." : animationRigs[size_t(selectedRig)].name.c_str();
     if (ImGui::BeginCombo("Rig", rig))
     {
-        for (size_t i = 0; i < rigNames.size(); ++i)
+        for (size_t i = 0; i < animationRigs.size(); ++i)
         {
             ImGui::PushID(int(i));
-            if (ImGui::Selectable(rigNames[i].c_str(), selectedRig == int(i)))
+            if (ImGui::Selectable(animationRigs[i].name.c_str(), selectedRig == int(i)))
             {
                 try
                 {
                     SelectAnimationRig(i);
                 }
-                catch (const std::exception &ex)
+                catch (const std::exception& ex)
                 {
                     Log("Animation rig: " + std::string(ex.what()));
                 }
@@ -149,14 +157,15 @@ void ModelPreview::DrawAnimationControls()
                           "Matching palette sizes alone cannot verify bone order.");
     if (animationChoices.empty())
     {
-        ImGui::TextDisabled(selectedRig < 0 ? "Choose the model's rig to find clips." : "No matching clips in this package.");
+        ImGui::TextDisabled(selectedRig < 0 ? "Choose the model's rig to find clips."
+                                            : "No matching clips in this package.");
         ImGui::EndPopup();
         return;
     }
-    auto label = [](const std::string &name) { return name.substr(0, name.find('#')); };
+    auto label = [](const std::string& name) { return name.substr(0, name.find('#')); };
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 24);
     const std::string current =
-        selectedAnimation < 0 ? "Bind pose" : label(animationChoices[size_t(selectedAnimation)].name);
+        selectedAnimation < 0 ? "Bind pose" : label(animationChoices[size_t(selectedAnimation)].clip.name);
     if (ImGui::BeginCombo("Clip", current.c_str()))
     {
         if (ImGui::Selectable("Bind pose", selectedAnimation < 0))
@@ -164,18 +173,18 @@ void ModelPreview::DrawAnimationControls()
         for (size_t i = 0; i < animationChoices.size(); ++i)
         {
             ImGui::PushID(int(i));
-            if (ImGui::Selectable(label(animationChoices[i].name).c_str(), selectedAnimation == int(i)))
+            if (ImGui::Selectable(label(animationChoices[i].clip.name).c_str(), selectedAnimation == int(i)))
             {
                 try
                 {
                     SelectAnimation(i);
                 }
-                catch (const std::exception &ex)
+                catch (const std::exception& ex)
                 {
                     Log("Animation: " + std::string(ex.what()));
                 }
             }
-            ImGui::SetItemTooltip("%s", animationChoices[i].name.c_str());
+            ImGui::SetItemTooltip("%s", animationChoices[i].clip.name.c_str());
             ImGui::PopID();
         }
         ImGui::EndCombo();
@@ -198,20 +207,22 @@ void ModelPreview::DrawAnimationControls()
             bool grounded = animationGrounded;
             if (ImGui::Checkbox("Align to grid", &grounded))
                 SetAnimationGrounded(grounded);
-            ImGui::SetItemTooltip("Remove the initial scene position and rotation, then ground the first pose. "
-                                  "Later movement is preserved; disable to see original coordinates.");
+            ImGui::SetItemTooltip(
+                "Remove the initial scene position and rotation, then ground the first pose. "
+                "Later movement is preserved; disable to see original coordinates.");
         }
         ImGui::BeginDisabled(!animationClip);
         float time = animationTime;
         ImGui::SetNextItemWidth(ImGui::GetFontSize() * 22);
-        if (ImGui::SliderFloat("Seconds", &time, 0.f, animationClip ? animationClip->duration : 0.f, "%.2f"))
+        if (ImGui::SliderFloat("Seconds", &time, 0.f, animationClip ? animationClip->info.duration : 0.f,
+                               "%.2f"))
             SetAnimationTime(time);
         ImGui::EndDisabled();
         if (animationClip)
             ImGui::TextDisabled("%zu tracks / %zu bones", animationClip->tracks.size(),
                                 animationSkeleton->bones.size());
     }
-    catch (const std::exception &ex)
+    catch (const std::exception& ex)
     {
         animationPlaying = false;
         Log("Animation: " + std::string(ex.what()));

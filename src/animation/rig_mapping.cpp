@@ -3,86 +3,103 @@
 #include <functional>
 #include <stdexcept>
 
-void ModelPreview::InitializeAnimations(const PKPackage &package, const CMChunkResourceHeader &resource)
+namespace
+{
+void VisitMainChunks(const PKPackage& package, const std::function<void(const CMChunk&)>& visit)
+{
+    std::function<void(const CMChunk&)> walk = [&](const CMChunk& chunk) {
+        if (chunk.GetMaskedID() == Gen_PostLoadData)
+            return;
+        visit(chunk);
+        for (const auto& child : chunk.children)
+            walk(child);
+    };
+    for (const auto& root : package.rootChunks)
+        walk(root);
+}
+
+bool SameVariant(const CMChunkResourceHeader& candidate, const CMChunkResourceHeader& model)
+{
+    return candidate.GetQualityLevel() == model.GetQualityLevel() &&
+           (candidate.GetLanguageMask() == model.GetLanguageMask() ||
+            (candidate.GetLanguageMask() & model.GetLanguageMask()));
+}
+
+int RigScore(const CMChunkResourceHeader& candidate, const CMChunkResourceHeader& model,
+             const std::vector<uint32_t>& linkedRigs)
+{
+    int match = 0;
+    if (std::find(linkedRigs.begin(), linkedRigs.end(), candidate.GetCRC()) != linkedRigs.end())
+        match = 3;
+    else if (candidate.GetCRC() == model.GetCRC())
+        match = 2;
+    else if (candidate.GetName() == model.GetName())
+        match = 1;
+    return match ? match * 2 + (candidate.GetLanguageMask() == model.GetLanguageMask()) : -1;
+}
+} // namespace
+
+void ModelPreview::InitializeAnimations(const PKPackage& package, const CMChunkResourceHeader& model)
 {
     try
     {
-        std::vector<uint32_t> linkedRigs;
-        std::function<void(const CMChunk &)> findLinks = [&](const CMChunk &c) {
-            if (c.GetMaskedID() == Gen_PostLoadData)
-                return;
-            if (c.GetMaskedID() == GO_Type_Info && c.version == 18 && c.data.size() >= 92)
-            {
-                size_t at = 0;
-                const auto kind = c.Read<uint32_t>(at);
-                at = 84;
-                const auto rig = c.Read<uint32_t>(at);
-                const auto model = c.Read<uint32_t>(at);
-                if (kind == 0x102 && model == resource.GetCRC())
-                    linkedRigs.push_back(rig);
-            }
-            for (const auto &child : c.children)
-                findLinks(child);
-        };
-        for (const auto &root : package.rootChunks)
-            findLinks(root);
+        if (!isHierarchy)
+            animationSkin = RZGeometrySkin::Load(package, model, geometry);
 
-        int best = -1, selected = -1;
-        bool ambiguous = false;
-        std::function<void(const CMChunk &)> findHierarchy = [&](const CMChunk &c) {
-            if (c.GetMaskedID() == Gen_PostLoadData)
+        std::vector<uint32_t> linkedRigs;
+        VisitMainChunks(package, [&](const CMChunk& chunk) {
+            if (chunk.GetMaskedID() != GO_Type_Info || chunk.version != 18 || chunk.data.size() < 92)
                 return;
-            if (c.GetMaskedID() == GenSub_Resource)
-                if (const auto *h = c.FindChild(GenSub_ResourceHeader))
-                {
-                    CMChunkResourceHeader candidate(*h);
-                    const auto language = candidate.GetLanguageMask();
-                    const auto wanted = resource.GetLanguageMask();
-                    if (candidate.GetResourceType() == kCMResourceType_Hierarchy &&
-                        candidate.GetQualityLevel() == resource.GetQualityLevel() &&
-                        (!isHierarchy || candidate.GetCRC() == resource.GetCRC()) &&
-                        (language == wanted || (language & wanted)))
-                    {
-                        try
-                        {
-                            auto skeleton = animation::Skeleton::Load(c, package.isLittleEndian);
-                            if (!isHierarchy)
-                                animation::Skin::Load(package, resource, geometry, skeleton);
-                            rigResources.push_back(&c);
-                            rigNames.push_back(candidate.GetName());
-                            const bool linked = std::find(linkedRigs.begin(), linkedRigs.end(),
-                                                          candidate.GetCRC()) != linkedRigs.end();
-                            const int match = linked ? 3 : candidate.GetCRC() == resource.GetCRC() ? 2 :
-                                              candidate.GetName() == resource.GetName() ? 1 : 0;
-                            const int score = match ? match * 2 + (language == wanted) : -1;
-                            if (score > best)
-                            {
-                                best = score;
-                                selected = int(rigResources.size() - 1);
-                                ambiguous = false;
-                            }
-                            else if (score >= 0 && score == best)
-                                ambiguous = true;
-                        }
-                        catch (const std::exception &)
-                        {
-                            // Rigid meshes and incompatible palettes cannot use this rig.
-                        }
-                    }
-                }
-            for (const auto &child : c.children)
-                findHierarchy(child);
-        };
-        for (const auto &root : package.rootChunks)
-            findHierarchy(root);
-        if (selected >= 0 && !ambiguous)
-            SelectAnimationRig(size_t(selected));
-        else if (!rigResources.empty())
+            size_t offset = 0;
+            if (chunk.Read<uint32_t>(offset) != 0x102)
+                return;
+            offset = 84;
+            const auto hierarchyCRC = chunk.Read<uint32_t>(offset);
+            if (chunk.Read<uint32_t>(offset) == model.GetCRC())
+                linkedRigs.push_back(hierarchyCRC);
+        });
+
+        int bestScore = -1, bestRig = -1;
+        bool ambiguous = false;
+        VisitMainChunks(package, [&](const CMChunk& chunk) {
+            if (chunk.GetMaskedID() != GenSub_Resource)
+                return;
+            const auto* header = chunk.FindChild(GenSub_ResourceHeader);
+            if (!header)
+                return;
+            const CMChunkResourceHeader candidate(*header);
+            if (candidate.GetResourceType() != kCMResourceType_Hierarchy || !SameVariant(candidate, model) ||
+                (isHierarchy && candidate.GetCRC() != model.GetCRC()))
+                return;
+            try
+            {
+                auto skeleton = RZHierarchy::Load(chunk, package.isLittleEndian);
+                if (animationSkin)
+                    animationSkin->Validate(skeleton);
+                animationRigs.push_back(std::move(skeleton));
+            }
+            catch (const std::exception&)
+            {
+                return; // Unsupported hierarchy or palette; not a valid manual choice.
+            }
+            const int score = RigScore(candidate, model, linkedRigs);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestRig = int(animationRigs.size() - 1);
+                ambiguous = false;
+            }
+            else if (score >= 0 && score == bestScore)
+                ambiguous = true;
+        });
+        if (bestRig >= 0 && !ambiguous)
+            SelectAnimationRig(size_t(bestRig));
+        else if (!animationRigs.empty())
             Log("Animation: choose a shared rig in Animation...; no unique model/rig reference was found.");
-        else if (!isHierarchy)
-            Log("Animation: no supported skin and rig pair in this package.");
+        else
+            Log("Animation: no supported rig in this package.");
     }
-    catch (const std::exception &ex)
+    catch (const std::exception& ex)
     {
         Log("Animations unavailable: " + std::string(ex.what()));
     }
@@ -90,69 +107,48 @@ void ModelPreview::InitializeAnimations(const PKPackage &package, const CMChunkR
 
 void ModelPreview::SelectAnimationRig(size_t index)
 {
-    if (!shown.package || index >= rigResources.size())
+    if (!shown.package || index >= animationRigs.size())
         throw std::runtime_error("Select a rig from the current package.");
-    const auto &package = *shown.package;
-    auto skeleton = animation::Skeleton::Load(*rigResources[index], package.isLittleEndian);
-    std::optional<animation::Skin> skin;
-    if (!isHierarchy)
-    {
-        const auto header = CMChunkResourceHeader::FindOwner(package, *shown.chunk);
-        if (!header)
-            throw std::runtime_error("Model resource is missing.");
-        skin = animation::Skin::Load(package, *header, bindGeometry ? *bindGeometry : geometry, skeleton);
-    }
+    const auto& package = *shown.package;
+    const auto& skeleton = animationRigs[index];
+    if (animationSkin)
+        animationSkin->Validate(skeleton);
+
+    std::vector<AnimationChoice> choices;
+    size_t skipped = 0, additive = 0;
+    VisitMainChunks(package, [&](const CMChunk& chunk) {
+        if (chunk.GetMaskedID() != GenSub_Resource)
+            return;
+        const auto* header = chunk.FindChild(GenSub_ResourceHeader);
+        if (!header || CMChunkResourceHeader(*header).GetResourceType() != kCMResourceType_HAnim)
+            return;
+        try
+        {
+            auto clip = RZHAnim::Load(package, chunk, RZHAnim::LoadMode::Metadata);
+            const auto map = clip.Map(skeleton);
+            if (map.empty() || !std::all_of(map.begin(), map.end(), [](int bone) { return bone >= 0; }))
+                return;
+            if (clip.IsAdditive())
+                ++additive;
+            else
+                choices.push_back({std::move(clip), &chunk});
+        }
+        catch (const std::exception&)
+        {
+            ++skipped;
+        }
+    });
+
     ResetAnimation();
-    animationSkeleton = std::move(skeleton);
-    animationSkin = std::move(skin);
+    animationSkeleton = skeleton;
     if (!isHierarchy && !bindGeometry)
         bindGeometry = geometry;
     selectedRig = int(index);
-    animationChoices.clear();
-    animationResources.clear();
-    try
-    {
-        size_t skipped = 0;
-        std::function<void(const CMChunk &)> findClips = [&](const CMChunk &c) {
-            if (c.GetMaskedID() == Gen_PostLoadData)
-                return;
-            if (c.GetMaskedID() == GenSub_Resource)
-                if (const auto *h = c.FindChild(GenSub_ResourceHeader))
-                    if (CMChunkResourceHeader(*h).GetResourceType() == kCMResourceType_HAnim)
-                    {
-                        try
-                        {
-                            auto clip = animation::Clip::Load(package, c, false);
-                            const auto map = clip.Map(*animationSkeleton);
-                            if (!map.empty() &&
-                                std::all_of(map.begin(), map.end(), [](int bone) { return bone >= 0; }))
-                            {
-                                animationChoices.push_back(std::move(clip));
-                                animationResources.push_back(&c);
-                            }
-                        }
-                        catch (const std::exception &)
-                        {
-                            ++skipped;
-                        }
-                    }
-            for (const auto &child : c.children)
-                findClips(child);
-        };
-        for (const auto &root : package.rootChunks)
-            findClips(root);
-        Log("Animation rig " + animationSkeleton->name + ": " + std::to_string(animationChoices.size()) +
-            " bone-compatible clips for " +
-            std::to_string(animationSkeleton->bones.size()) +
-            " bones (CRC mapping; unmapped bones keep the bind pose).");
-        if (skipped)
-            Log("Skipped " + std::to_string(skipped) + " animation resources with invalid metadata.");
-    }
-    catch (const std::exception &ex)
-    {
-        animationChoices.clear();
-        animationResources.clear();
-        Log("Animations unavailable: " + std::string(ex.what()));
-    }
+    animationChoices = std::move(choices);
+    Log("Animation rig " + skeleton.name + ": " + std::to_string(animationChoices.size()) +
+        " bone-compatible clips for " + std::to_string(skeleton.bones.size()) + " bones.");
+    if (additive)
+        Log("Skipped " + std::to_string(additive) + " additive clips that require a base animation.");
+    if (skipped)
+        Log("Skipped " + std::to_string(skipped) + " animation resources with invalid metadata.");
 }
-
