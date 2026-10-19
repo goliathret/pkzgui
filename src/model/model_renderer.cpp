@@ -243,8 +243,7 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
         if (meshes[i].indices.empty())
             continue;
         const MeshStyle& style = styles[i];
-
-        if (style.texture == 0 && !drawNoTex)
+        if (!style.visible)
             continue;
 
         gl3::Uniform1f(Uniform("uUVDivisor"), style.uvDivisor);

@@ -485,6 +485,7 @@ namespace
         auto session = Fixture();
         ModelPreview preview;
         preview.Update(session);
+        preview.SetTextured(false);
         gl.Draw(preview);
 
         std::set<unsigned> buffers;

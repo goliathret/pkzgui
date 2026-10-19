@@ -59,6 +59,7 @@ public:
         float color[3] = { 1.0f, 1.0f, 1.0f };
         float uvDivisor = 1.0f;
         bool alphaCutout = false;
+        bool visible = true;
     };
 
     bool drawNoTex = false;
