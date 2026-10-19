@@ -42,6 +42,7 @@ namespace
 #endif
     };
     constexpr MenuItem kEditItems[] = {
+        {"Find in package...", "Ctrl+F", Command::FindPackage},
         {"Edit selected field...", "Enter"},
     };
     constexpr MenuItem kViewItems[] = {
@@ -126,6 +127,8 @@ bool AppMenu::Init(GLFWwindow* window)
                 SetMenuShortcut(handle, "o");
             if (item.command == Command::Save)
                 SetMenuShortcut(handle, "s");
+            if (item.command == Command::FindPackage)
+                SetMenuShortcut(handle, "f");
 #endif
         }
     }

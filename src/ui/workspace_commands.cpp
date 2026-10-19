@@ -34,6 +34,9 @@ void Workspace::Execute(Command command)
         case Command::SaveAs:
             SavePackage(true);
             break;
+        case Command::FindPackage:
+            focusSearch = true;
+            break;
         case Command::ExtractTexture:
             ExtractSelectedTexture();
             break;
@@ -66,6 +69,7 @@ void Workspace::UpdateMenus(AppMenu& menu) const
     menu.SetEnabled(Command::OpenPackage, ready);
     menu.SetEnabled(Command::Save, ready && hasPackage);
     menu.SetEnabled(Command::SaveAs, ready && hasPackage);
+    menu.SetEnabled(Command::FindPackage, ready && hasPackage);
     menu.SetEnabled(Command::ExtractTexture, textureSelected);
     menu.SetEnabled(Command::ReplaceTexture, textureSelected);
     menu.SetEnabled(Command::ExtractAudio, audioSelected);

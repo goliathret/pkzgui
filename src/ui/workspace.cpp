@@ -108,7 +108,40 @@ void Workspace::DrawChunkPanel()
 {
     BeginPanel("Chunks", ImVec2(panes.chunksWidth, 0), ImGuiWindowFlags_HorizontalScrollbar);
     PanelTitle("Chunks");
-    if (session.package)
+    const SelectionKey key{session.package.get(), nullptr, session.revision};
+    const bool rebuilt = key != searchKey;
+    if (rebuilt)
+    {
+        packageSearch.Build(session.package.get());
+        searchKey = key;
+    }
+    if (focusSearch)
+    {
+        ImGui::SetKeyboardFocusHere();
+        focusSearch = false;
+    }
+    ImGui::SetNextItemWidth(-1);
+    const bool changed = ImGui::InputTextWithHint("##Package search", "Search names, types, IDs...", searchText,
+        sizeof(searchText), ImGuiInputTextFlags_EscapeClearsAll);
+    if (changed || rebuilt)
+        packageSearch.Filter(searchText);
+    if (searchText[0])
+    {
+        ImGui::TextDisabled("%zu matches", packageSearch.Count());
+        ImGuiListClipper clipper;
+        clipper.Begin(int(packageSearch.Count()));
+        while (clipper.Step())
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row)
+            {
+                const auto& result = packageSearch.Result(size_t(row));
+                ImGui::PushID(result.chunk);
+                if (ImGui::Selectable(result.label.c_str(), result.chunk == session.selected))
+                    session.selected = result.chunk;
+                ImGui::SetItemTooltip("%s", result.path.c_str());
+                ImGui::PopID();
+            }
+    }
+    else if (session.package)
         DrawChunkTree(*session.package, session.selected);
     ImGui::EndChild();
 }

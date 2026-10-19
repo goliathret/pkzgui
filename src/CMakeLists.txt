@@ -48,6 +48,7 @@ add_library(pkzgui_lib STATIC
     model/model_controls.cpp
     model/model_preview.cpp
     model/model_renderer.cpp
+    package/package_search.cpp
     package/package_session.cpp
     platform/platform.cpp
     render/gl.cpp
@@ -86,6 +87,9 @@ if(PKZGUI_BUILD_TESTS)
 
     pkzgui_test(package_session_test)
     add_test(NAME package_session COMMAND package_session_test "${CMAKE_CURRENT_BINARY_DIR}/test-packages")
+
+    pkzgui_test(package_search_test)
+    add_test(NAME package_search COMMAND package_search_test)
 
     pkzgui_test(texture_actions_test)
     add_test(NAME texture_actions COMMAND texture_actions_test "${CMAKE_CURRENT_BINARY_DIR}/test-textures")
