@@ -404,6 +404,7 @@ void ModelPreview::Update(const PackageSession& session)
     const bool sameModel = key.SameChunk(shown);
     const float previousDistance = camera.distance;
     const int previousMaterial = selectedMaterial;
+    const size_t previousPart = environmentPart;
     Clear();
     shown = key;
     if (!key.package || !key.chunk)
@@ -415,7 +416,8 @@ void ModelPreview::Update(const PackageSession& session)
         if (!resource)
             return;
         const uint32_t type = resource->GetResourceType();
-        if (type != kCMResourceType_Geometry && type != kCMResourceType_Hierarchy)
+        if (type != kCMResourceType_Geometry && type != kCMResourceType_Hierarchy &&
+            type != kCMResourceType_Environment)
             return;
         active = true;
         name = resource->GetName();
@@ -431,6 +433,8 @@ void ModelPreview::Update(const PackageSession& session)
             Load(*key.package, *resource);
             if (sameModel)
             {
+                if (environment)
+                    SelectEnvironmentPart(previousPart);
                 camera.distance = previousDistance;
                 selectedMaterial = std::clamp(previousMaterial, 0, std::max(0, int(materials.size()) - 1));
             }
@@ -438,7 +442,8 @@ void ModelPreview::Update(const PackageSession& session)
                 std::to_string(vertexCount) + " vertices, " + std::to_string(triangleCount) +
                 " triangles (static preview).");
         }
-        InitializeAnimations(*key.package, *resource);
+        if (!environment)
+            InitializeAnimations(*key.package, *resource);
     }
     catch (const std::exception& ex)
     {
@@ -458,7 +463,18 @@ void ModelPreview::Update(const PackageSession& session)
 
 void ModelPreview::Load(const PKPackage& package, const CMChunkResourceHeader& resource)
 {
-    geometry = RZGeometry::Load(package, resource);
+    if (resource.GetResourceType() == kCMResourceType_Environment)
+    {
+        environment = RZEnvironment::Load(package, resource);
+        environmentPart = 0;
+        while (environmentPart < environment->parts.size() &&
+               environment->parts[environmentPart].primitives.empty())
+            ++environmentPart;
+        geometry = environment->Geometry(environmentPart);
+        name = geometry.name;
+    }
+    else
+        geometry = RZGeometry::Load(package, resource);
     size_t bytes = 0;
     for (const RZGeometry::Mesh& mesh : geometry.meshes)
     {
@@ -473,7 +489,29 @@ void ModelPreview::Load(const PKPackage& package, const CMChunkResourceHeader& r
     for (size_t i = 0; i < materials.size(); ++i)
         materials[i].packageTexture = RZTexture::FindHeader(package, geometry.materials[i].textureCRC,
             resource.GetLanguageMask(), resource.GetQualityLevel());
+    if (environment && !geometry.meshes.empty())
+        selectedMaterial = int(geometry.meshes[0].material);
     camera.Frame(geometry.Bounds());
+}
+
+void ModelPreview::SelectEnvironmentPart(size_t part)
+{
+    if (!environment)
+        throw std::runtime_error("Select an environment first.");
+    auto candidate = environment->Geometry(part);
+    renderer.Release();
+    geometry = std::move(candidate);
+    environmentPart = part;
+    name = geometry.name;
+    selectedMaterial = int(geometry.meshes[0].material);
+    vertexCount = triangleCount = 0;
+    for (const auto& mesh : geometry.meshes)
+    {
+        vertexCount += mesh.VertexCount();
+        triangleCount += mesh.TriangleCount();
+    }
+    camera.Frame(geometry.Bounds());
+    renderDirty = true;
 }
 
 void ModelPreview::LoadHierarchy(const PKPackage& package, const CMChunkResourceHeader& resource)
@@ -531,6 +569,8 @@ void ModelPreview::Clear()
     animationSkin.reset();
     bindGeometry.reset();
     shown = {};
+    environment.reset();
+    environmentPart = 0;
     active = false;
     name.clear();
     error.clear();
@@ -645,7 +685,15 @@ void ModelPreview::DrawFields() const
         FieldRow("bones", "u32", std::to_string(boneCount));
         return;
     }
-    FieldRow("Model", "string", name);
+    FieldRow(environment ? "Environment part" : "Model", "string", name);
+    if (environment)
+    {
+        FieldRow("parts", "u32", std::to_string(environment->parts.size()));
+        FieldRow("placed instances", "u32", std::to_string(environment->instanceCount));
+        FieldRow("preview space", "",
+                 environment->parts[environmentPart].localSpace ? "Object local space"
+                                                                : "Baked world geometry");
+    }
     FieldRow("meshes", "u32", std::to_string(geometry.meshes.size()));
     FieldRow("vertices", "u32", std::to_string(vertexCount));
     FieldRow("triangles", "u32", std::to_string(triangleCount));
@@ -731,18 +779,20 @@ void ModelPreview::ApplyMaterialFlags(PackageSession& session, size_t index, uin
         throw std::runtime_error("Select a material first.");
 
     const auto resource = session.SelectedResource();
-    if (!resource || resource->GetResourceType() != kCMResourceType_Geometry)
-        throw std::runtime_error("Material flags can only be edited on a Geometry resource.");
+    if (!resource || (resource->GetResourceType() != kCMResourceType_Geometry &&
+                      resource->GetResourceType() != kCMResourceType_Environment))
+        throw std::runtime_error("Select a geometry or environment resource to edit its materials.");
 
     auto matchesResource = [&](CMChunk& chunk) -> bool {
         const uint32_t id = chunk.GetMaskedID();
-        if ((id != GenSub_Resource && id != Gen_PostLoadData) || !chunk.FindChild(Geo_Geometry))
+        if ((id != GenSub_Resource && id != Gen_PostLoadData) ||
+            (!chunk.FindChild(Geo_Geometry) && !chunk.FindChild(Env_Render)))
             return false;
         const CMChunk* headerChunk = chunk.FindChild(GenSub_ResourceHeader);
         if (!headerChunk)
             return false;
         const CMChunkResourceHeader candidate(*headerChunk);
-        return candidate.GetResourceType() == kCMResourceType_Geometry && candidate.IsSameResource(*resource);
+        return candidate.IsSameResource(*resource);
         };
 
     CMChunk* resourceChunk = nullptr;

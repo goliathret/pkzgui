@@ -3,6 +3,7 @@
 #include "texture/texture.h"
 #include "imgui.h"
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <stdexcept>
 
@@ -106,7 +107,8 @@ bool ModelPreview::DrawOverlay(const ImVec2& origin, const ImVec2& area)
     const float fontSize = ImGui::GetFontSize();
     const bool compact = area.x < fontSize * 16 || area.y < ImGui::GetFrameHeightWithSpacing() * 4;
     const bool collapsed = overlayCollapsed && !compact;
-    const int rows = compact || collapsed ? 1 : (3 + !animationRigs.empty() + !materials.empty());
+    const int rows =
+        compact || collapsed ? 1 : (3 + !animationRigs.empty() + !materials.empty() + bool(environment));
     const ImVec2 size(std::min(area.x - kOverlayPadding * 2, fontSize * (collapsed ? 10 : 18)),
         std::min(area.y - kOverlayPadding * 2, (ImGui::GetFrameHeight() + 3) * rows + kOverlayPadding * 2));
     const ImVec2 position(origin.x + area.x - size.x - kOverlayPadding, origin.y + area.y - size.y - kOverlayPadding);
@@ -168,6 +170,41 @@ void ModelPreview::DrawOverlayControls(bool collapsed, bool insidePopup)
         camera.Frame(geometry.Bounds());
         renderDirty = true;
     }
+    if (environment)
+    {
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##Environment part", environment->parts[environmentPart].name.c_str(),
+                              ImGuiComboFlags_HeightLarge))
+        {
+            ImGui::InputTextWithHint("##Part filter", "Find a section or prop...", environmentFilter,
+                                     sizeof(environmentFilter));
+            const std::string filter(environmentFilter);
+            for (size_t part = 0; part < environment->parts.size(); ++part)
+            {
+                const auto& entry = environment->parts[part];
+                if (entry.primitives.empty())
+                    continue;
+                const auto match = std::search(
+                    entry.name.begin(), entry.name.end(), filter.begin(), filter.end(),
+                    [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+                if (!filter.empty() && match == entry.name.end())
+                    continue;
+                if (ImGui::Selectable(environment->parts[part].name.c_str(), part == environmentPart))
+                {
+                    try
+                    {
+                        SelectEnvironmentPart(part);
+                    }
+                    catch (const std::exception& error)
+                    {
+                        Log(error.what());
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::SetItemTooltip("Baked world sections or individual objects in local space.");
+    }
     DrawAnimationControls();
     if (materials.empty())
         return;
@@ -195,8 +232,14 @@ void ModelPreview::DrawMaterialCombo(const char* id)
     if (ImGui::BeginCombo(id, geometry.materials[selectedMaterial].name.c_str()))
     {
         for (size_t i = 0; i < geometry.materials.size(); ++i)
+        {
+            const bool used = std::any_of(geometry.meshes.begin(), geometry.meshes.end(),
+                                          [&](const auto& mesh) { return mesh.material == i; });
+            if (environment && !used)
+                continue;
             if (ImGui::Selectable(geometry.materials[i].name.c_str(), selectedMaterial == int(i)))
                 selectedMaterial = int(i);
+        }
         ImGui::EndCombo();
     }
     ImGui::SetItemTooltip("Material");
