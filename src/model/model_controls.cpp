@@ -156,7 +156,11 @@ void ModelPreview::DrawOverlayControls(bool collapsed, bool insidePopup)
     ImGui::SetItemTooltip(collapsed ? "Expand model controls" : "Condense model controls");
     ImGui::SameLine();
     if (!collapsed)
+    {
         ImGui::TextUnformatted("Model controls");
+        ImGui::SetItemTooltip("Left drag: free rotation\nRight / middle drag or Shift+left: pan\nScroll: "
+                              "zoom toward cursor\nF: frame model / Home: reset view");
+    }
     if (ImGui::Checkbox("Textures", &textured))
         renderDirty = true;
     if (collapsed)
@@ -166,10 +170,8 @@ void ModelPreview::DrawOverlayControls(bool collapsed, bool insidePopup)
         renderDirty = true;
     ImGui::SameLine();
     if (ImGui::Button("Frame model"))
-    {
-        camera.Frame(geometry.Bounds());
-        renderDirty = true;
-    }
+        FrameCamera();
+    ImGui::SetItemTooltip("Frame the current model or skeleton (F). Home resets the view rotation too.");
     if (environment)
     {
         ImGui::SetNextItemWidth(-1);
@@ -213,6 +215,8 @@ void ModelPreview::DrawOverlayControls(bool collapsed, bool insidePopup)
         ImGui::OpenPopup(kAdjustmentsPopup);
     if (!ImGui::BeginPopup(kAdjustmentsPopup))
         return;
+    if (ImGui::Button("Reset view"))
+        FrameCamera(true);
     DrawMaterialCombo("##Adjustment material");
     if (ImGui::Checkbox("Cutout alpha", &materials[selectedMaterial].alphaCutout))
         renderDirty = true;

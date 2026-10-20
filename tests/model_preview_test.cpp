@@ -709,6 +709,96 @@ namespace
         std::filesystem::remove_all(dir);
     }
 
+    std::vector<uint8_t> PreviewPixels(GLHarness& gl)
+    {
+        const GLStateGuard saved;
+        gl.bindFramebuffer(GL_READ_FRAMEBUFFER, gl.PreviewFramebuffer());
+        GLint attachment, width, height;
+        Proc<void (*)(unsigned, unsigned, unsigned, int*)>("glGetFramebufferAttachmentParameteriv")(
+            GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, kAttachmentObjectName, &attachment);
+        glBindTexture(GL_TEXTURE_2D, attachment);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+        glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+        std::vector<uint8_t> pixels(size_t(width) * height * 4);
+        glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        return pixels;
+    }
+
+    void CameraInputTests(GLHarness& gl)
+    {
+        auto& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(600, 480);
+        auto session = TexturedFixture();
+        ModelPreview preview;
+        preview.Update(session);
+        gl.Draw(preview);
+        const auto original = PreviewPixels(gl);
+        io.AddMousePosEvent(160, 150);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        gl.Draw(preview);
+        io.AddMousePosEvent(230, 190);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        gl.Draw(preview);
+        const auto rotated = PreviewPixels(gl);
+        Check(rotated != original, "Dragging the canvas did not rotate the camera");
+
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, true);
+        gl.Draw(preview);
+        io.AddMousePosEvent(255, 210);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Right, false);
+        gl.Draw(preview);
+        const auto panned = PreviewPixels(gl);
+        Check(panned != rotated, "Right-button dragging did not pan the view");
+
+        ++session.revision;
+        preview.Update(session);
+        gl.Draw(preview);
+        Check(PreviewPixels(gl) == panned, "Refreshing the same model lost the camera's pan or rotation");
+        io.AddMouseWheelEvent(0, 0.25f);
+        gl.Draw(preview);
+        Check(PreviewPixels(gl) != panned, "Fractional wheel input did not refresh the preview");
+
+        io.AddKeyEvent(ImGuiKey_Home, true);
+        gl.Draw(preview);
+        io.AddKeyEvent(ImGuiKey_Home, false);
+        gl.Draw(preview);
+        Check(PreviewPixels(gl) == original, "Home did not restore the initial model view");
+
+        io.AddMousePosEvent(160, 150);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        gl.Draw(preview);
+        io.AddMousePosEvent(io.DisplaySize.x - 130, io.DisplaySize.y - 100);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        gl.Draw(preview);
+        Check(PreviewPixels(gl) != original, "A rotation drag stopped when crossing the model HUD");
+        io.AddMousePosEvent(160, 150);
+        gl.Draw(preview);
+        io.AddKeyEvent(ImGuiKey_Home, true);
+        gl.Draw(preview);
+        io.AddKeyEvent(ImGuiKey_Home, false);
+        gl.Draw(preview);
+
+        // The model controls overlap the canvas; dragging their title must not move the camera.
+        const ImVec2 hud(io.DisplaySize.x - 130, io.DisplaySize.y - 100);
+        io.AddMousePosEvent(hud.x, hud.y);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, true);
+        gl.Draw(preview);
+        io.AddMousePosEvent(hud.x + 10, hud.y + 5);
+        gl.Draw(preview);
+        io.AddMouseButtonEvent(ImGuiMouseButton_Left, false);
+        gl.Draw(preview);
+        Check(PreviewPixels(gl) == original, "Dragging over the model HUD moved the camera");
+        io.AddMousePosEvent(-100, -100);
+        gl.Draw(preview);
+        preview.Clear();
+    }
+
     void EnvironmentRenderTest(GLHarness& gl)
     {
         auto session = EnvironmentFixture();
@@ -842,8 +932,7 @@ namespace
         meshes[0].texcoords.resize(6);
         meshes[0].indices = {0, 1, 2};
         OrbitCamera camera;
-        camera.yaw = 0;
-        camera.pitch = 0;
+        camera.rotation.SetMulIdentity();
         camera.target = BUVector3(0, 1, 0);
         camera.distance = 5;
         std::vector<ModelRenderer::MeshStyle> styles(1);
@@ -893,6 +982,7 @@ namespace
                 TexturedRenderTests(gl);
                 VolumePreviewTest();
                 EnvironmentRenderTest(gl);
+                CameraInputTests(gl);
                 MultisampleFallbackTests(gl);
                 AnimatedBufferTests(gl);
                 std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured "
