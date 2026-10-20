@@ -80,7 +80,8 @@ private:
 
     void Load(const PKPackage& package, const CMChunkResourceHeader& resource);
     void LoadHierarchy(const PKPackage& package, const CMChunkResourceHeader& resource);
-    void HandleCameraInput(bool blocked);
+    void HandleCameraInput(const ImVec2& origin, bool blocked);
+    void FrameCamera(bool resetRotation = false);
     void RenderFrame(int width, int height);
     std::vector<ModelRenderer::MeshStyle> MeshStyles();
     unsigned int MaterialTexture(size_t index);
@@ -135,6 +136,10 @@ private:
 
     ModelRenderer renderer;
     OrbitCamera camera;
+    BUVector2 cameraViewport{1, 1};
+    int cameraDragButton = -1;
+    bool cameraPanning = false;
+    bool frameOnDraw = true;
     int selectedMaterial = 0;
     float uvDivisor = 1024.0f;
     bool textured = true; // SHOW TEXTURES BY DEFAULT!! this was driving me crazy :(

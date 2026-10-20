@@ -402,7 +402,6 @@ void ModelPreview::Update(const PackageSession& session)
     if (key == shown)
         return;
     const bool sameModel = key.SameChunk(shown);
-    const float previousDistance = camera.distance;
     const int previousMaterial = selectedMaterial;
     const size_t previousPart = environmentPart;
     Clear();
@@ -424,8 +423,6 @@ void ModelPreview::Update(const PackageSession& session)
         if (type == kCMResourceType_Hierarchy)
         {
             LoadHierarchy(*key.package, *resource);
-            if (sameModel)
-                camera.distance = previousDistance;
             Log("Hierarchy " + name + ": " + std::to_string(boneCount) + " bones.");
         }
         else
@@ -435,13 +432,13 @@ void ModelPreview::Update(const PackageSession& session)
             {
                 if (environment)
                     SelectEnvironmentPart(previousPart);
-                camera.distance = previousDistance;
                 selectedMaterial = std::clamp(previousMaterial, 0, std::max(0, int(materials.size()) - 1));
             }
             Log("Model " + name + ": " + std::to_string(geometry.meshes.size()) + " meshes, " +
                 std::to_string(vertexCount) + " vertices, " + std::to_string(triangleCount) +
                 " triangles (static preview).");
         }
+        frameOnDraw = !sameModel;
         if (!environment)
             InitializeAnimations(*key.package, *resource);
     }
@@ -491,7 +488,7 @@ void ModelPreview::Load(const PKPackage& package, const CMChunkResourceHeader& r
             resource.GetLanguageMask(), resource.GetQualityLevel());
     if (environment && !geometry.meshes.empty())
         selectedMaterial = int(geometry.meshes[0].material);
-    camera.Frame(geometry.Bounds());
+    frameOnDraw = true;
 }
 
 void ModelPreview::SelectEnvironmentPart(size_t part)
@@ -510,7 +507,7 @@ void ModelPreview::SelectEnvironmentPart(size_t part)
         vertexCount += mesh.VertexCount();
         triangleCount += mesh.TriangleCount();
     }
-    camera.Frame(geometry.Bounds());
+    frameOnDraw = true;
     renderDirty = true;
 }
 
@@ -528,7 +525,6 @@ void ModelPreview::LoadHierarchy(const PKPackage& package, const CMChunkResource
     for (const auto& bone : skeleton.bones)
         bind.push_back(bone.bind);
     const auto world = skeleton.WorldPose(bind);
-    BUAABB bounds;
     for (size_t i = 0; i < world.size(); ++i)
     {
         const auto& matrix = world[i];
@@ -536,17 +532,10 @@ void ModelPreview::LoadHierarchy(const PKPackage& package, const CMChunkResource
         bonePositions.push_back(position);
         boneParents.push_back(skeleton.bones[i].parent);
         boneNames.push_back(skeleton.bones[i].name);
-        if (i == 0)
-            bounds.mMin = bounds.mMax = position;
-        else
-        {
-            bounds.mMin.Min(position);
-            bounds.mMax.Max(position);
-        }
     }
     isHierarchy = true;
     boneCount = world.size();
-    camera.Frame(bounds);
+    frameOnDraw = true;
 }
 
 void ModelPreview::Clear()
@@ -583,6 +572,8 @@ void ModelPreview::Clear()
     error.clear();
     vertexCount = triangleCount = 0;
     selectedMaterial = 0;
+    cameraDragButton = -1;
+    frameOnDraw = true;
     renderDirty = true;
 }
 
@@ -604,6 +595,8 @@ void ModelPreview::Draw()
     if (available.x < 32 || available.y < 32)
         return;
 
+    cameraViewport = BUVector2(available.x, available.y);
+
     const ImVec2 scale = ImGui::GetIO().DisplayFramebufferScale;
     const float pixelWidth = available.x * scale.x;
     const float pixelHeight = available.y * scale.y;
@@ -616,9 +609,13 @@ void ModelPreview::Draw()
     drawList->ChannelsSplit(2);
     drawList->ChannelsSetCurrent(1);
     const bool overlayHasInput = DrawOverlay(origin, available);
+    if (frameOnDraw)
+        FrameCamera();
     ImGui::SetCursorScreenPos(origin);
-    ImGui::InvisibleButton("##modelview", available);
-    HandleCameraInput(overlayHasInput);
+    ImGui::InvisibleButton("##modelview", available,
+                           ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonMiddle |
+                               ImGuiButtonFlags_MouseButtonRight);
+    HandleCameraInput(origin, overlayHasInput);
 
     try
     {
@@ -644,9 +641,10 @@ void ModelPreview::Draw()
     {
         const ImVec2 mouse = ImGui::GetIO().MousePos;
         const BUVector3 eye = camera.Eye();
-        const Mat4 view = Mat4::LookAt(eye, camera.target, BUVector3(0.0f, 1.0f, 0.0f));
-        const Mat4 projection = Mat4::Perspective(0.785398f, available.x / std::max(available.y, 1.0f), 0.05f,
-            camera.distance * 20.0f + 10.0f);
+        const Mat4 view = Mat4::LookAt(eye, camera.target, camera.Up());
+        const Mat4 projection =
+            Mat4::Perspective(OrbitCamera::kFieldOfView, available.x / std::max(available.y, 1.0f),
+                              OrbitCamera::kNearPlane, camera.distance * 20.0f + 10.0f);
         const Mat4 mvp = projection * view;
         int best = -1;
         float bestDist = 12.0f;
@@ -950,21 +948,70 @@ const std::optional<CMChunkResourceHeader>& ModelPreview::PackageTexture(size_t 
     return materials.at(material).packageTexture;
 }
 
-void ModelPreview::HandleCameraInput(bool blocked)
+void ModelPreview::FrameCamera(bool resetRotation)
 {
-    if (blocked)
-        return;
-    const ImGuiIO& io = ImGui::GetIO();
-    if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+    if (resetRotation)
+        camera.ResetRotation();
+    BUAABB bounds = geometry.Bounds();
+    if (isHierarchy && !bonePositions.empty())
     {
-        if (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)
-            renderDirty = true;
-        camera.Orbit(io.MouseDelta.x, io.MouseDelta.y);
+        bounds.mMin = bounds.mMax = bonePositions[0];
+        for (const auto& position : bonePositions)
+        {
+            bounds.mMin.Min(position);
+            bounds.mMax.Max(position);
+        }
     }
-    if (ImGui::IsItemHovered() && io.MouseWheel != 0.0f)
+    camera.Frame(bounds, cameraViewport.x / std::max(1.0f, cameraViewport.y));
+    cameraDragButton = -1;
+    frameOnDraw = false;
+    renderDirty = true;
+}
+
+void ModelPreview::HandleCameraInput(const ImVec2& origin, bool blocked)
+{
+    const ImGuiIO& io = ImGui::GetIO();
+    const BUVector2 mouse(io.MousePos.x - origin.x, io.MousePos.y - origin.y);
+    const bool hovered = ImGui::IsItemHovered() && !blocked;
+
+    if (cameraDragButton >= 0 && (!ImGui::IsItemActive() || !ImGui::IsMouseDown(cameraDragButton)))
+        cameraDragButton = -1;
+    if (cameraDragButton < 0 && hovered && ImGui::IsItemActive())
     {
-        camera.Zoom(io.MouseWheel);
+        for (int button : {ImGuiMouseButton_Left, ImGuiMouseButton_Middle, ImGuiMouseButton_Right})
+        {
+            if (!ImGui::IsMouseClicked(button))
+                continue;
+            cameraDragButton = button;
+            cameraPanning = button != ImGuiMouseButton_Left || io.KeyShift;
+            camera.BeginOrbit(mouse, cameraViewport);
+            break;
+        }
+    }
+    else if (cameraDragButton >= 0 && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0))
+    {
+        if (cameraPanning)
+            camera.Pan(BUVector2(io.MouseDelta.x, io.MouseDelta.y), cameraViewport);
+        else
+            camera.Orbit(mouse, cameraViewport);
         renderDirty = true;
+    }
+    if (cameraDragButton >= 0)
+        ImGui::SetMouseCursor(cameraPanning ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_Hand);
+
+    if (!hovered)
+        return;
+    if (io.MouseWheel != 0)
+    {
+        camera.Zoom(io.MouseWheel, mouse, cameraViewport);
+        renderDirty = true;
+    }
+    if (!io.WantTextInput && !io.KeyCtrl && !io.KeySuper && !io.KeyAlt)
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_Home, false))
+            FrameCamera(true);
+        else if (ImGui::IsKeyPressed(ImGuiKey_F, false))
+            FrameCamera();
     }
 }
 

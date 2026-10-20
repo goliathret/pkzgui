@@ -1,45 +1,11 @@
 #pragma once
-#include "BaseUtils/BUAABB.h"
+#include "model/orbit_camera.h"
 #include "Resource/RZGeometry.h"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
-
-struct OrbitCamera
-{
-    float yaw = 0.6f;
-    float pitch = 0.35f;
-    float distance = 3.0f;
-    BUVector3 target;
-
-    void Frame(const BUAABB& bounds)
-    {
-        if (bounds.mMin.x > bounds.mMax.x)
-            return;
-        target = (bounds.mMin + bounds.mMax) * 0.5f;
-        const float radius = (bounds.mMax - bounds.mMin).Length() * 0.5f;
-        distance = std::max(radius * 2.8f, 0.5f);
-    }
-
-    void Orbit(float deltaX, float deltaY)
-    {
-        yaw += deltaX * 0.01f;
-        pitch = std::clamp(pitch + deltaY * 0.01f, -1.4f, 1.4f);
-    }
-
-    void Zoom(float wheel)
-    {
-        distance = std::clamp(distance * (wheel > 0 ? 0.9f : 1.11f), 0.2f, 1000000.0f);
-    }
-
-    BUVector3 Eye() const
-    {
-        const BUVector3 direction(std::cos(pitch) * std::sin(yaw), std::sin(pitch), std::cos(pitch) * std::cos(yaw));
-        return target + direction * distance;
-    }
-};
 
 class ModelRenderer
 {

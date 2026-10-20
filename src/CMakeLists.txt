@@ -48,6 +48,7 @@ add_library(pkzgui_lib STATIC
     model/model_controls.cpp
     model/model_preview.cpp
     model/model_renderer.cpp
+    model/orbit_camera.cpp
     package/package_search.cpp
     package/package_session.cpp
     platform/platform.cpp

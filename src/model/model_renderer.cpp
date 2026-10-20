@@ -6,8 +6,6 @@
 
 namespace
 {
-    constexpr float kFieldOfView = 0.785398f;
-    constexpr float kNearPlane = 0.05f;
     constexpr float kClearColor[4] = {0.18f, 0.19f, 0.22f, 1.0f};
     constexpr float kLightDirection[3] = {-0.4f, -0.8f, -0.3f};
 
@@ -213,9 +211,9 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
 
     const BUVector3 eye = camera.Eye();
     const Mat4 model;
-    const Mat4 view = Mat4::LookAt(eye, camera.target, BUVector3(0.0f, 1.0f, 0.0f));
-    const Mat4 projection = Mat4::Perspective(kFieldOfView, float(width) / float(height), kNearPlane,
-        camera.distance * 20.0f + 10.0f);
+    const Mat4 view = Mat4::LookAt(eye, camera.target, camera.Up());
+    const Mat4 projection = Mat4::Perspective(OrbitCamera::kFieldOfView, float(width) / float(height),
+                                              OrbitCamera::kNearPlane, camera.distance * 20.0f + 10.0f);
     const Mat4 modelViewProjection = projection * (view * model);
 
     EnsureGrid();
@@ -297,9 +295,9 @@ void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, cons
 
     const BUVector3 eye = camera.Eye();
     const Mat4 model;
-    const Mat4 view = Mat4::LookAt(eye, camera.target, BUVector3(0.0f, 1.0f, 0.0f));
-    const Mat4 projection = Mat4::Perspective(kFieldOfView, float(width) / float(height), kNearPlane,
-        camera.distance * 20.0f + 10.0f);
+    const Mat4 view = Mat4::LookAt(eye, camera.target, camera.Up());
+    const Mat4 projection = Mat4::Perspective(OrbitCamera::kFieldOfView, float(width) / float(height),
+                                              OrbitCamera::kNearPlane, camera.distance * 20.0f + 10.0f);
     const Mat4 modelViewProjection = projection * (view * model);
 
     glEnable(GL_BLEND);
@@ -344,14 +342,8 @@ void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, cons
         gl3::BindVertexArray(0);
     }
 
-    BUVector3 forward = camera.target - eye;
-    forward.Normalize();
-    BUVector3 right = forward.Cross(BUVector3(0.0f, 1.0f, 0.0f));
-    if (right.Length() < 1e-4f)
-        right = forward.Cross(BUVector3(0.0f, 0.0f, 1.0f));
-    right.Normalize();
-    BUVector3 up = right.Cross(forward);
-    up.Normalize();
+    const BUVector3 right = camera.Right();
+    const BUVector3 up = camera.Up();
 
     const float half = std::max(0.01f, camera.distance * 0.008f);
     std::vector<float> jointVerts;
