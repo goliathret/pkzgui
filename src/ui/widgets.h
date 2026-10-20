@@ -20,7 +20,7 @@ bool BeginFieldTable();
 void EndFieldTable();
 void FieldRow(const char* name, const char* type, const std::string& value);
 
-void DrawChunkTree(const PKPackage& package, const CMChunk*& selected);
+void DrawChunkTree(const PKPackage& package, const CMChunk*& selected, bool revealSelected = false);
 
 class DebugLog
 {

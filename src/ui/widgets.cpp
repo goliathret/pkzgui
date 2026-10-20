@@ -1,11 +1,25 @@
 #include "ui/widgets.h"
 #include "package/package_search.h"
+#include <algorithm>
 #include <cstdio>
 #include <utility>
 
 namespace
 {
-    void DrawChunk(const CMChunk& chunk, const CMChunk*& selected, bool root)
+    bool FindChunkPath(const CMChunk& chunk, const CMChunk* selected, std::vector<const CMChunk*>& path)
+    {
+        path.push_back(&chunk);
+        if (&chunk == selected)
+            return true;
+        for (const auto& child : chunk.children)
+            if (FindChunkPath(child, selected, path))
+                return true;
+        path.pop_back();
+        return false;
+    }
+
+    void DrawChunk(const CMChunk& chunk, const CMChunk*& selected, bool root,
+                   const std::vector<const CMChunk*>& revealPath)
     {
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick;
         if (chunk.children.empty())
@@ -15,13 +29,17 @@ namespace
         if (&chunk == selected)
             flags |= ImGuiTreeNodeFlags_Selected;
 
+        if (std::find(revealPath.begin(), revealPath.end(), &chunk) != revealPath.end())
+            ImGui::SetNextItemOpen(true);
         const bool open = ImGui::TreeNodeEx(&chunk, flags, "%s", PackageChunkLabel(chunk).c_str());
+        if (!revealPath.empty() && &chunk == selected)
+            ImGui::SetScrollHereY(0.5f);
         if (ImGui::IsItemClicked())
             selected = &chunk;
         if (!open || chunk.children.empty())
             return;
         for (const CMChunk& child : chunk.children)
-            DrawChunk(child, selected, false);
+            DrawChunk(child, selected, false, revealPath);
         ImGui::TreePop();
     }
 }
@@ -85,10 +103,15 @@ void FieldRow(const char* name, const char* type, const std::string& value)
     ImGui::SetItemTooltip("%s", value.c_str());
 }
 
-void DrawChunkTree(const PKPackage& package, const CMChunk*& selected)
+void DrawChunkTree(const PKPackage& package, const CMChunk*& selected, bool revealSelected)
 {
+    std::vector<const CMChunk*> path;
+    if (revealSelected)
+        for (const auto& root : package.rootChunks)
+            if (FindChunkPath(root, selected, path))
+                break;
     for (const CMChunk& root : package.rootChunks)
-        DrawChunk(root, selected, true);
+        DrawChunk(root, selected, true, path);
 }
 
 void DebugLog::Add(std::string message)

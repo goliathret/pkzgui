@@ -47,6 +47,7 @@ void Workspace::Open(const std::string& path)
 void Workspace::Draw()
 {
     PollBackgroundWork();
+    NavigateTextureReference();
     if (deferred != Command::None)
         Execute(std::exchange(deferred, Command::None));
 
@@ -142,7 +143,7 @@ void Workspace::DrawChunkPanel()
             }
     }
     else if (session.package)
-        DrawChunkTree(*session.package, session.selected);
+        DrawChunkTree(*session.package, session.selected, std::exchange(revealSelection, false));
     ImGui::EndChild();
 }
 
@@ -178,8 +179,11 @@ void Workspace::DrawInspectorColumn(float height)
     ImGui::BeginChild("Inspector column", ImVec2(0, height));
     const float top = ImGui::GetCursorPosY();
     const bool showModelActions = modelPreview.IsActive();
+    const bool showTextureReferences = resource && resource->GetResourceType() == kCMResourceType_Texture;
+    const bool showDetails = showModelActions || showTextureReferences;
     panes.modelActionsHeight = std::clamp(panes.modelActionsHeight, 100.0f, std::max(100.0f, height - 120.0f));
-    const float fieldsHeight = showModelActions ? std::max(1.0f, height - panes.modelActionsHeight - kGap) : height;
+    const float fieldsHeight =
+        showDetails ? std::max(1.0f, height - panes.modelActionsHeight - kGap) : height;
 
     BeginPanel("Fields", ImVec2(0, fieldsHeight));
     ImGui::BeginDisabled(IsBusy());
@@ -187,13 +191,16 @@ void Workspace::DrawInspectorColumn(float height)
     ImGui::EndDisabled();
     ImGui::EndChild();
 
-    if (showModelActions)
+    if (showDetails)
     {
         ImGui::SetCursorPosY(top + fieldsHeight);
         Splitter("Model exports splitter", ImVec2(ImGui::GetContentRegionAvail().x, kGap), SplitAxis::Vertical,
             panes.modelActionsHeight, -1.0f);
         ImGui::SetCursorPosY(top + fieldsHeight + kGap);
-        DrawModelActionsPanel();
+        if (showModelActions)
+            DrawModelActionsPanel();
+        else
+            DrawTextureReferencesPanel();
     }
     ImGui::EndChild();
     ImGui::PopStyleVar();
@@ -239,6 +246,77 @@ void Workspace::DrawModelActionsPanel()
     ImGui::PopStyleVar();
     ImGui::EndDisabled();
     ImGui::EndChild();
+}
+
+void Workspace::DrawTextureReferencesPanel()
+{
+    BeginPanel("Texture references", ImVec2(0, panes.modelActionsHeight));
+    PanelTitle("Referenced by");
+    ImGui::BeginDisabled(IsBusy());
+    const SelectionKey key{session.package.get(), nullptr, session.revision};
+    if (key != usageIndexKey)
+    {
+        textureUsageIndex.Build(session.package.get());
+        usageIndexKey = key;
+        usageSelection = {};
+        for (const auto& warning : textureUsageIndex.Warnings())
+            log.Add(warning);
+    }
+    const SelectionKey selection = SelectionKey::Of(session);
+    if (selection != usageSelection)
+    {
+        textureUsages =
+            resource ? textureUsageIndex.Find(*resource) : std::vector<TextureUsageIndex::Usage>{};
+        usageSelection = selection;
+    }
+    if (textureUsages.empty())
+        ImGui::TextWrapped("No model material references found in this package. Other resources or packages "
+                           "may still use this texture.");
+    for (size_t i = 0; i < textureUsages.size(); ++i)
+    {
+        const auto& usage = textureUsages[i];
+        ImGui::PushID(int(i));
+        if (ImGui::Button("View model"))
+            pendingTextureReference = usage;
+        ImGui::SetItemTooltip("%s\n%s\n%s", usage.resourceName.c_str(), usage.partName.c_str(),
+                              usage.materialName.c_str());
+        ImGui::SameLine();
+        ImGui::TextUnformatted(usage.materialName.c_str());
+        ImGui::TextDisabled("%s",
+                            usage.partName.empty() ? usage.resourceName.c_str() : usage.partName.c_str());
+        std::string slots = usage.baseColor ? "Base color" : "Texture sampler";
+        for (size_t slot : usage.samplers)
+            slots += " / slot " + std::to_string(slot);
+        ImGui::TextDisabled("%s", slots.c_str());
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+    ImGui::EndDisabled();
+    ImGui::EndChild();
+}
+
+void Workspace::NavigateTextureReference()
+{
+    if (!pendingTextureReference)
+        return;
+    const auto usage = std::exchange(pendingTextureReference, std::nullopt);
+    if (IsBusy() || usageIndexKey != SelectionKey{session.package.get(), nullptr, session.revision})
+        return;
+    try
+    {
+        session.selected = usage->resource;
+        searchText[0] = 0;
+        revealSelection = true;
+        RefreshSelection();
+        if (usage->environmentPart >= 0)
+            modelPreview.SelectEnvironmentPart(size_t(usage->environmentPart));
+        modelPreview.SelectMaterial(usage->material);
+        session.status = "Viewing " + usage->materialName + " in " + usage->resourceName;
+    }
+    catch (const std::exception& error)
+    {
+        session.error = error.what();
+    }
 }
 
 void Workspace::DrawStatusBar(float height)

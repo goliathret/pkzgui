@@ -3,6 +3,7 @@
 #include "render/gl.h"
 #include "texture/texture.h"
 #include "BaseUtils/BUPng.h"
+#include "Resource/TextureUsage.h"
 #include "imgui.h"
 #include <array>
 #include <cstdio>
@@ -215,11 +216,21 @@ namespace
         preview.Update(session);
         Check(preview.Error().empty() && preview.EnvironmentPartCount() == 3 && preview.VertexCount() == 3,
               "Environment was not recognized as drawable content");
-        preview.SelectEnvironmentPart(1);
-        Check(preview.TriangleCount() == 1 && preview.Geometry().meshes[0].hasUV,
-            "Baked environment group did not retain its mesh layout");
-        preview.SelectEnvironmentPart(2);
-        Check(preview.TriangleCount() == 1, "Environment object did not open");
+        const auto texture = *preview.PackageTexture(0);
+        TextureUsageIndex index;
+        index.Build(session.package.get());
+        const auto links = index.Find(texture);
+        Check(links.size() == 2, "Baked group and object texture links were not indexed");
+        for (const auto& link : links)
+        {
+            session.selected = link.resource;
+            preview.Update(session);
+            preview.SelectEnvironmentPart(size_t(link.environmentPart));
+            preview.SelectMaterial(link.material);
+            Check(preview.Error().empty() && preview.TriangleCount() == 1 &&
+                      preview.Geometry().meshes[0].hasUV,
+                  "Texture link did not open a usable environment part");
+        }
         const auto partName = preview.Name();
         preview.ApplyMaterialFlags(session, 0, 0x80000);
         preview.Update(session);
@@ -228,7 +239,7 @@ namespace
               "Editing an environment material lost the selected part or flags");
         Check(Throws([&] { preview.SelectEnvironmentPart(99999); }) && preview.Name() == partName,
               "Invalid environment part changed the preview");
-        std::puts("PASS: environment selection and retained part after material edits");
+        std::puts("PASS: environment selection, texture navigation and retained part after material edits");
     }
 
     void MaterialTests()

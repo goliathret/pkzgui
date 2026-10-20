@@ -514,6 +514,13 @@ void ModelPreview::SelectEnvironmentPart(size_t part)
     renderDirty = true;
 }
 
+void ModelPreview::SelectMaterial(size_t material)
+{
+    if (material >= materials.size())
+        throw std::runtime_error("Material link is out of range.");
+    selectedMaterial = int(material);
+}
+
 void ModelPreview::LoadHierarchy(const PKPackage& package, const CMChunkResourceHeader& resource)
 {
     const auto skeleton = RZHierarchy::Load(package, resource);
