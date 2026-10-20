@@ -20,7 +20,7 @@ struct OrbitCamera
             return;
         target = (bounds.mMin + bounds.mMax) * 0.5f;
         const float radius = (bounds.mMax - bounds.mMin).Length() * 0.5f;
-        distance = std::max(radius * 2.2f, 0.5f);
+        distance = std::max(radius * 2.8f, 0.5f);
     }
 
     void Orbit(float deltaX, float deltaY)
