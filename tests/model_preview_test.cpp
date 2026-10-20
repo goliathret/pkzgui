@@ -175,6 +175,62 @@ namespace
         return session;
     }
 
+    PackageSession EnvironmentFixture()
+    {
+        auto session = TexturedFixture();
+        auto& source = session.package->rootChunks[0];
+        auto resource = CMChunk::Container(GenSub_Resource, 1);
+        resource.AddChild(CMChunkResourceHeader::Build(55, kCMResourceType_Environment, 0, 0, 0, 0, "lab"));
+        auto render = CMChunk::Container(Env_Render, 1);
+        auto materials = CMChunk::Container(RenderOctree_MaterialList, 3);
+        materials.AddChild(source.children.back().children[0]);
+        render.AddChild(std::move(materials));
+        auto world = CMChunk::Leaf(RenderOctree_Prims, 7, std::vector<uint8_t>(72));
+        PutBE32(world.data, 28, 3);
+        PutBE32(world.data, 32, 0x20000003);
+        PutBE32(world.data, 36, 0x42);
+        render.AddChild(std::move(world));
+        auto objects = CMChunk::Leaf(RenderOctree_Obj, 13, std::vector<uint8_t>(104));
+        PutBE32(objects.data, 48, 0x00010000);
+        PutBE32(objects.data, 60, 3);
+        PutBE32(objects.data, 64, 0x00032008);
+        PutBE32(objects.data, 68, 0x42);
+        render.AddChild(std::move(objects));
+        auto vertices = CMChunk::Container(GenSub_VertexBufferArray, 1);
+        vertices.AddChild(source.children[1].children[1]);
+        render.AddChild(std::move(vertices));
+        auto indices = CMChunk::Container(GenSub_IndexBufferArray, 1);
+        indices.AddChild(source.children[1].children[2]);
+        render.AddChild(std::move(indices));
+        resource.AddChild(std::move(render));
+        source = std::move(resource);
+        session.selected = &source;
+        return session;
+    }
+
+    void EnvironmentTests()
+    {
+        auto session = EnvironmentFixture();
+        ModelPreview preview;
+        preview.Update(session);
+        Check(preview.Error().empty() && preview.EnvironmentPartCount() == 3 && preview.VertexCount() == 3,
+              "Environment was not recognized as drawable content");
+        preview.SelectEnvironmentPart(1);
+        Check(preview.TriangleCount() == 1 && preview.Geometry().meshes[0].hasUV,
+            "Baked environment group did not retain its mesh layout");
+        preview.SelectEnvironmentPart(2);
+        Check(preview.TriangleCount() == 1, "Environment object did not open");
+        const auto partName = preview.Name();
+        preview.ApplyMaterialFlags(session, 0, 0x80000);
+        preview.Update(session);
+        Check(preview.Error().empty() && preview.Name() == partName &&
+                  preview.Geometry().materials[0].flags == 0x80000,
+              "Editing an environment material lost the selected part or flags");
+        Check(Throws([&] { preview.SelectEnvironmentPart(99999); }) && preview.Name() == partName,
+              "Invalid environment part changed the preview");
+        std::puts("PASS: environment selection and retained part after material edits");
+    }
+
     void MaterialTests()
     {
         auto session = TexturedFixture();
@@ -642,6 +698,22 @@ namespace
         std::filesystem::remove_all(dir);
     }
 
+    void EnvironmentRenderTest(GLHarness& gl)
+    {
+        auto session = EnvironmentFixture();
+        ModelPreview preview;
+        preview.Update(session);
+        preview.SelectEnvironmentPart(2);
+        gl.Draw(preview);
+        Check(gl.CountColor(gl.PreviewFramebuffer(), true) > 100,
+              "Environment object did not render with its material texture");
+        preview.SelectEnvironmentPart(1);
+        gl.Draw(preview);
+        Check(gl.CountColor(gl.PreviewFramebuffer(), true) > 100,
+              "Baked material group did not render with its texture");
+        preview.Clear();
+    }
+
     void VolumePreviewTest()
     {
         RZTexture texture;
@@ -809,6 +881,7 @@ namespace
                 UntexturedRenderTests(gl);
                 TexturedRenderTests(gl);
                 VolumePreviewTest();
+                EnvironmentRenderTest(gl);
                 MultisampleFallbackTests(gl);
                 AnimatedBufferTests(gl);
                 std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured "
@@ -828,6 +901,7 @@ int main(int argc, char**)
             return GLTests();
         SelectionTests();
         MaterialTests();
+        EnvironmentTests();
         ReferenceTests();
         return 0;
     }

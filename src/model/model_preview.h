@@ -4,6 +4,7 @@
 #include "Resource/RZGeometrySkin.h"
 #include "package/package_session.h"
 #include "Resource/RZGeometry.h"
+#include "Resource/RZEnvironment.h"
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -28,6 +29,10 @@ public:
     std::vector<std::string> TakeLogMessages();
 
     void SetTextured(bool enabled);
+    void SelectEnvironmentPart(size_t part);
+    size_t EnvironmentPartCount() const { return environment ? environment->parts.size() : 0; }
+    const std::string& EnvironmentPartName(size_t part) const { return environment->parts.at(part).name; }
+
     void LoadRetexture(size_t material, const std::string& path);
     void UsePackageTexture(size_t material);
     void UseRetexture(size_t material);
@@ -97,6 +102,9 @@ private:
     std::string name;
     std::string error;
     RZGeometry geometry;
+    std::optional<RZEnvironment> environment;
+    size_t environmentPart = 0;
+    char environmentFilter[128] = {};
     std::vector<MaterialState> materials;
     size_t vertexCount = 0;
     size_t triangleCount = 0;
