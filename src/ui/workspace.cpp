@@ -266,8 +266,10 @@ void Workspace::DrawReplaceTextureDialog()
     ImGui::OpenPopup(kReplaceTexturePopup);
     if (!ImGui::BeginPopupModal(kReplaceTexturePopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
+    ImGui::BeginDisabled(replacement->dds);
     ImGui::InputInt("Width", &replacement->width);
     ImGui::InputInt("Height", &replacement->height);
+    ImGui::EndDisabled();
     ImGui::TextUnformatted("Encoded in the original GPU format only.");
     const bool confirmed = ImGui::Button("OK");
     ImGui::SameLine();

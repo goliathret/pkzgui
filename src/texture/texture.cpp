@@ -5,10 +5,16 @@
 #include "BaseUtils/BUPng.h"
 #include "imgui.h"
 #include <algorithm>
+#include <cctype>
 #include <stdexcept>
 
 namespace
 {
+    bool IsDds(const std::vector<uint8_t>& bytes)
+    {
+        return bytes.size() >= 4 && BUDds::ReadU32LE(bytes.data()) == BUDds::FourCC('D', 'D', 'S', ' ');
+    }
+
     std::vector<uint8_t> ResizeNearest(const BUPng::Image& image, uint32_t width, uint32_t height)
     {
         std::vector<uint8_t> rgba(size_t(width) * height * 4);
@@ -51,11 +57,30 @@ RZTexture SelectedTexture(const PackageSession& session)
     return RZTexture::Load(*session.package, SelectedTextureHeader(session));
 }
 
+BUPng::Image DecodeTextureImage(const std::vector<uint8_t>& file)
+{
+    if (IsDds(file))
+    {
+        const auto image = BUDds::Decode(file);
+        if (image.volume)
+            throw std::runtime_error("Use texture replacement to import a volume DDS.");
+        return {image.width, image.height, BUDds::DecodeRGBA8(image)};
+    }
+    return BUPng::Decode(file);
+}
+
 void ExtractTexture(const PKPackage& package, const CMChunkResourceHeader& header, const std::string& path)
 {
     const RZTexture texture = RZTexture::Load(package, header);
-    const auto rgba = texture.DecodeLevel0();
-    WriteFile(std::filesystem::u8path(path), BUPng::EncodeRGBA8(rgba.data(), texture.desc.width, texture.desc.height));
+    auto extension = std::filesystem::u8path(path).extension().u8string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return std::tolower(c); });
+    if (extension == ".dds")
+        WriteFile(std::filesystem::u8path(path), texture.ToDds());
+    else
+    {
+        const auto rgba = texture.DecodeLevel0();
+        WriteFile(std::filesystem::u8path(path), BUPng::EncodeRGBA8(rgba.data(), texture.PreviewWidth(), texture.desc.height));
+    }
 }
 
 void ReplaceTexture(PackageSession& session, const CMChunkResourceHeader& header, const std::string& path,
@@ -66,9 +91,20 @@ void ReplaceTexture(PackageSession& session, const CMChunkResourceHeader& header
     if (!session.package || header.GetResourceType() != kCMResourceType_Texture)
         throw std::runtime_error("Select a texture first.");
 
-    const BUPng::Image image = BUPng::Decode(ReadFile(std::filesystem::u8path(path)));
+    const auto bytes = ReadFile(std::filesystem::u8path(path));
     RZTexture texture = RZTexture::Load(*session.package, header);
-    texture.Reencode(ResizeNearest(image, width, height).data(), width, height);
+    if (IsDds(bytes))
+    {
+        if (width != texture.PreviewWidth() || height != texture.desc.height)
+            throw std::runtime_error("DDS replacement must keep the texture dimensions.");
+        texture.ReplaceDds(bytes);
+    }
+    else
+    {
+        const auto image = DecodeTextureImage(bytes);
+        const auto rgba = ResizeNearest(image, width, height);
+        texture.Reencode(rgba.data(), width, height);
+    }
     texture.Store(*session.package);
     session.MarkEdited("Texture replaced (original format kept). Save the package to write to disk.");
 }
@@ -109,7 +145,7 @@ void TexturePreview::Upload(const RZTexture& decoded)
 {
     GLint maximum = 0;
     glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maximum);
-    const GLint width = GLint(descriptor.width), height = GLint(descriptor.height);
+    const GLint width = GLint(descriptor.PreviewWidth()), height = GLint(descriptor.height);
     if (!width || !height || width > maximum || height > maximum)
         throw std::runtime_error("Texture dimensions exceed the renderer's limits.");
     const auto rgba = decoded.DecodeLevel0();
@@ -138,13 +174,16 @@ void TexturePreview::Draw() const
         ImGui::TextWrapped("Preview unavailable: %s", error.c_str());
         return;
     }
-    ImGui::TextDisabled("%u x %u", descriptor.width, descriptor.height);
+    if (descriptor.IsVolume())
+        ImGui::TextDisabled("%u x %u x %u (slices left to right)", descriptor.width, descriptor.height, descriptor.depth);
+    else
+        ImGui::TextDisabled("%u x %u", descriptor.width, descriptor.height);
 
     const ImVec2 available = ImGui::GetContentRegionAvail();
-    const float scale = std::min({1.0f, available.x / descriptor.width, available.y / descriptor.height});
+    const float scale = std::min({1.0f, available.x / descriptor.PreviewWidth(), available.y / descriptor.height});
     if (scale <= 0)
         return;
-    const ImVec2 size(descriptor.width * scale, descriptor.height * scale);
+    const ImVec2 size(descriptor.PreviewWidth() * scale, descriptor.height * scale);
     const ImVec2 cursor = ImGui::GetCursorPos();
     ImGui::SetCursorPos(ImVec2(cursor.x + (available.x - size.x) / 2, cursor.y + (available.y - size.y) / 2));
     DrawCheckerboard(ImGui::GetCursorScreenPos(), size);
@@ -158,7 +197,8 @@ void TexturePreview::DrawFields() const
     FieldRow("Texture", "string", name);
     FieldRow("Width", "u32", std::to_string(descriptor.width));
     FieldRow("Height", "u32", std::to_string(descriptor.height));
-    FieldRow("dimension", "u32", std::to_string(descriptor.dimension));
+    FieldRow("kind", "u32", std::to_string(descriptor.kind));
+    FieldRow("flags", "u32", HexString(descriptor.flags));
     FieldRow("mipLevels", "u32", std::to_string(descriptor.mipLevels));
     FieldRow("depth", "u32", std::to_string(descriptor.depth));
     FieldRow("d3dFormat", "u32", HexString(descriptor.d3dFormat));

@@ -244,7 +244,7 @@ void ModelPreview::DrawTextureSummary(size_t index)
     {
         ImGui::TextDisabled("No package texture");
         ImGui::SetItemTooltip(info.textureCRC
-            ? "The referenced texture is not in this package. A PNG can still be previewed."
+            ? "The referenced texture is not in this package. A PNG or DDS can still be previewed."
             : "This material has no base-color texture.");
     }
     if (!material.retexturePath.empty())
@@ -310,12 +310,15 @@ void ModelPreview::DrawRetextureActions(PackageSession& session, GLFWwindow* win
     const MaterialState& material = materials[index];
 
     ImGui::BeginDisabled(!material.packageTexture);
-    const bool extract = ImGui::Button("Extract package PNG...", fullWidth);
+    const bool extractPng = ImGui::Button("Extract package PNG...", fullWidth);
+    const bool extractDds = ImGui::Button("Extract package DDS...", fullWidth);
     ImGui::EndDisabled();
-    if (extract)
+    if (extractPng || extractDds)
     {
         const auto& header = *material.packageTexture;
-        const auto path = PickSaveFile(window, kPngFilter, "png", SanitizeFileName(header.GetName()) + ".png");
+        const std::string extension = extractDds ? "dds" : "png";
+        const auto path = PickSaveFile(window, extractDds ? "DDS texture" : kPngFilter, extension.c_str(),
+            SanitizeFileName(header.GetName()) + "." + extension);
         if (!path.empty())
         {
             ExtractTexture(*session.package, header, path);
@@ -323,16 +326,16 @@ void ModelPreview::DrawRetextureActions(PackageSession& session, GLFWwindow* win
         }
     }
 
-    if (ImGui::Button("Load retexture PNG...", fullWidth))
+    if (ImGui::Button("Load retexture PNG / DDS...", fullWidth))
     {
-        const auto path = PickOpenFile(window, kPngFilter, "png");
+        const auto path = PickOpenFile(window, "PNG or DDS image", "png,dds");
         if (!path.empty())
             LoadRetexture(index, path);
     }
 
     ImGui::BeginDisabled(material.retexturePath.empty());
     const float halfWidth = std::max(1.0f, (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f);
-    const bool reload = ImGui::Button("Reload PNG", ImVec2(halfWidth, 0));
+    const bool reload = ImGui::Button("Reload image", ImVec2(halfWidth, 0));
     ImGui::SameLine();
     const bool clear = ImGui::Button("Clear", fullWidth);
     ImGui::EndDisabled();

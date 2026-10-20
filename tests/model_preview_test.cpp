@@ -612,8 +612,82 @@ namespace
         preview.Update(session);
         gl.Draw(preview);
         Check(magentaPixels() > 100, "Package edit invalidated the model or reset the textured mode");
+
+        const auto packageTexture = RZTexture::Load(*session.package, *preview.PackageTexture(0));
+        auto ddsImage = BUDds::Decode(packageTexture.ToDds());
+        for (auto& level : ddsImage.levels)
+            for (size_t i = 0; i < level.data.size(); i += 4)
+            {
+                level.data[i] = 0;
+                level.data[i + 1] = 255;
+                level.data[i + 2] = 0;
+                level.data[i + 3] = 255;
+            }
+        const auto ddsPath = dir / "override.dds";
+        WriteFile(ddsPath, BUDds::Encode(ddsImage));
+        const auto beforeDds = session.package->Serialize();
+        preview.LoadRetexture(0, ddsPath.u8string());
+        gl.Draw(preview);
+        Check(greenPixels() > 100 && session.package->Serialize() == beforeDds,
+            "DDS override did not render or changed the package before applying");
+        preview.ApplyRetexture(session, 0);
+        const auto ddsTexture = RZTexture::Load(*session.package, *preview.PackageTexture(0));
+        Check(session.selected == selected && ddsTexture.desc.d3dFormat == packageTexture.desc.d3dFormat &&
+                ddsTexture.gpuData.size() == packageTexture.gpuData.size(),
+            "DDS apply changed selection, format or GPU allocation");
+        preview.Update(session);
+        gl.Draw(preview);
+        Check(greenPixels() > 100, "Applied DDS did not persist in the package texture");
         preview.Clear();
         std::filesystem::remove_all(dir);
+    }
+
+    void VolumePreviewTest()
+    {
+        RZTexture texture;
+        texture.name = "LUT";
+        texture.desc.kind = 2;
+        texture.desc.width = texture.desc.height = texture.desc.depth = 4;
+        texture.desc.d3dFormat = XenosTexture::D3DFormat::kA8R8G8B8Tiled;
+        std::vector<uint8_t> pixels(4 * 4 * 4 * 4);
+        for (size_t i = 0; i < pixels.size(); ++i)
+            pixels[i] = uint8_t(i);
+        texture.SetLevels({{4, 4, pixels, 4}});
+        PackageSession session;
+        session.package = std::make_unique<PKPackage>();
+        auto root = CMChunk::Container(Root, 1);
+        root.AddChild(texture.BuildLibraryResource(0x123400));
+        auto post = texture.BuildPostLoadData(0x123400);
+        post.offset = 0x123400;
+        root.AddChild(std::move(post));
+        session.package->rootChunks.push_back(std::move(root));
+        session.selected = &session.package->rootChunks[0].children[0];
+        TexturePreview preview;
+        preview.Update(session);
+        const GLStateGuard saved;
+        bool uploaded = false;
+        for (unsigned id = 1; id < 256; ++id)
+        {
+            if (!glIsTexture(id))
+                continue;
+            glBindTexture(GL_TEXTURE_2D, id);
+            GLint width = 0, height = 0;
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+            glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+            if (width != 16 || height != 4)
+                continue;
+            std::vector<uint8_t> actual(16 * 4 * 4);
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+            glPixelStorei(GL_PACK_SKIP_ROWS, 0);
+            glPixelStorei(GL_PACK_SKIP_PIXELS, 0);
+            glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, actual.data());
+            uploaded = actual == texture.DecodeLevel0();
+            if (uploaded)
+                break;
+        }
+        Check(uploaded, "Volume LUT did not upload the complete horizontal slice strip");
+        preview.Clear();
     }
 
     struct MultisampleSupport
@@ -734,6 +808,7 @@ namespace
                 SetCallerState(gl);
                 UntexturedRenderTests(gl);
                 TexturedRenderTests(gl);
+                VolumePreviewTest();
                 MultisampleFallbackTests(gl);
                 AnimatedBufferTests(gl);
                 std::puts("PASS: visible model, GL state isolation, retained buffers, cached frames, resize, textured "

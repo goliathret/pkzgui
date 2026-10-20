@@ -64,6 +64,33 @@ namespace
         const auto png = BUPng::Decode(ReadFile(dir / "export.png"));
         Check(png.width == 16 && png.height == 16 && png.rgba == original.DecodeLevel0(), "Export pixels differ");
 
+        const auto ddsPath = dir / "export.DDS";
+        ExtractTexture(*session.package, header, ddsPath.u8string());
+        auto dds = BUDds::Decode(ReadFile(ddsPath));
+        Check(BUDds::DecodeRGBA8(dds) == png.rgba, "DDS export pixels differ");
+        for (size_t i = 0; i < dds.levels[0].data.size(); i += 4)
+        {
+            dds.levels[0].data[i] = 255;
+            dds.levels[0].data[i + 1] = 0;
+            dds.levels[0].data[i + 2] = 0;
+        }
+        WriteFile(ddsPath, BUDds::Encode(dds));
+        ReplaceTexture(session, header, ddsPath.u8string(), 16, 16);
+        const auto ddsPixels = SelectedTexture(session).DecodeLevel0();
+        Check(ddsPixels[0] == 0 && ddsPixels[2] == 255, "DDS replacement changed RGB order");
+        Check(session.Save(source.u8string()), "DDS replacement could not be saved");
+        PackageSession ddsReloaded;
+        Check(ddsReloaded.Load(source.u8string()), "DDS replacement could not be reloaded");
+        ddsReloaded.selected = TextureChunk(ddsReloaded);
+        Check(SelectedTexture(ddsReloaded).DecodeLevel0() == ddsPixels, "Saved DDS pixels differ");
+
+        const auto beforeInvalidDds = session.package->Serialize();
+        const auto revision = session.revision;
+        WriteFile(ddsPath, std::vector<uint8_t>{'D', 'D', 'S', ' '});
+        Check(Throws([&] { ReplaceTexture(session, header, ddsPath.u8string(), 16, 16); }) &&
+                session.package->Serialize() == beforeInvalidDds && session.revision == revision,
+            "Truncated DDS changed the package");
+
         std::vector<uint8_t> replacement(8 * 8 * 4, 0);
         for (size_t i = 0; i < replacement.size(); i += 4)
         {

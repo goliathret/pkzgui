@@ -22,6 +22,8 @@ public:
     const Entry& Result(size_t index) const { return entries.at(matches.at(index)); }
 
 private:
+    void IndexChunk(const CMChunk& chunk, const std::string& path);
+
     std::vector<Entry> entries;
     std::vector<size_t> matches;
 };

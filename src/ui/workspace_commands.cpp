@@ -43,6 +43,12 @@ void Workspace::Execute(Command command)
         case Command::ReplaceTexture:
             BeginTextureReplacement();
             break;
+        case Command::ExtractTextureDds:
+            ExtractSelectedTexture(true);
+            break;
+        case Command::ReplaceTextureDds:
+            BeginTextureReplacement(true);
+            break;
         case Command::ExtractAudio:
             ExtractSelectedAudio();
             break;
@@ -72,6 +78,8 @@ void Workspace::UpdateMenus(AppMenu& menu) const
     menu.SetEnabled(Command::FindPackage, ready && hasPackage);
     menu.SetEnabled(Command::ExtractTexture, textureSelected);
     menu.SetEnabled(Command::ReplaceTexture, textureSelected);
+    menu.SetEnabled(Command::ExtractTextureDds, textureSelected);
+    menu.SetEnabled(Command::ReplaceTextureDds, textureSelected);
     menu.SetEnabled(Command::ExtractAudio, audioSelected);
     menu.SetEnabled(Command::PlayAudio, audioSelected);
 }
@@ -159,22 +167,24 @@ void Workspace::SavePackage(bool chooseDestination)
         session.Save(destination);
 }
 
-void Workspace::ExtractSelectedTexture()
+void Workspace::ExtractSelectedTexture(bool dds)
 {
     const auto header = SelectedTextureHeader(session);
-    const auto path = PickSaveFile(window, "PNG", "png", SanitizeFileName(header.GetName()) + ".png");
+    const std::string extension = dds ? "dds" : "png";
+    const auto path = PickSaveFile(window, dds ? "DDS texture" : "PNG image", extension.c_str(),
+        SanitizeFileName(header.GetName()) + "." + extension);
     if (path.empty())
         return;
     ExtractTexture(*session.package, header, path);
     session.status = "Extracted " + path;
 }
 
-void Workspace::BeginTextureReplacement()
+void Workspace::BeginTextureReplacement(bool dds)
 {
     const RZTexture texture = SelectedTexture(session);
-    const auto path = PickOpenFile(window, "PNG", "png");
+    const auto path = PickOpenFile(window, dds ? "DDS texture" : "PNG image", dds ? "dds" : "png");
     if (!path.empty())
-        replacement = PendingReplacement{path, int(texture.desc.width), int(texture.desc.height)};
+        replacement = PendingReplacement{path, int(texture.PreviewWidth()), int(texture.desc.height), dds};
 }
 
 void Workspace::ApplyTextureReplacement()
