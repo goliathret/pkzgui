@@ -666,16 +666,16 @@ void ModelPreview::LoadRetexture(size_t index, const std::string& path)
 {
     if (index >= materials.size())
         throw std::runtime_error("Select a material first.");
-    const auto png = ReadFile(std::filesystem::u8path(path));
-    const BUPng::Image image = BUPng::Decode(png);
+    const auto bytes = ReadFile(std::filesystem::u8path(path));
+    const auto image = DecodeTextureImage(bytes);
     MaterialState& material = materials[index];
     ModelRenderer::Texture texture = renderer.UploadTexture(image.rgba, image.width, image.height);
     renderer.DeleteTexture(material.retexture);
     material.retexture = texture;
     material.retexturePath = path;
-    material.retextureCRC = BUCRC().GenerateRaw(png.data(), png.size());
+    material.retextureCRC = BUCRC().GenerateRaw(bytes.data(), bytes.size());
     material.useRetexture = true;
-    Log("PNG preview for " + geometry.materials[index].name + ": " + path + " (package unchanged).");
+    Log("Texture preview for " + geometry.materials[index].name + ": " + path + " (package unchanged).");
     SetTextured(true);
 }
 
@@ -691,7 +691,7 @@ void ModelPreview::UsePackageTexture(size_t index)
 void ModelPreview::UseRetexture(size_t index)
 {
     if (index >= materials.size() || !materials[index].retexture.id)
-        throw std::runtime_error("Load a retexture PNG first.");
+        throw std::runtime_error("Load a PNG or DDS retexture first.");
     materials[index].useRetexture = true;
     Log("Using retexture for " + geometry.materials[index].name + ".");
     SetTextured(true);
@@ -712,10 +712,10 @@ void ModelPreview::ApplyRetexture(PackageSession& session, size_t index)
         throw std::runtime_error("Select a material with a texture in this package first.");
     const MaterialState& material = materials[index];
     if (material.retexturePath.empty())
-        throw std::runtime_error("Load a retexture PNG first.");
-    const auto png = ReadFile(std::filesystem::u8path(material.retexturePath));
-    if (BUCRC().GenerateRaw(png.data(), png.size()) != material.retextureCRC)
-        throw std::runtime_error("Retexture changed on disk. Reload PNG to preview it before applying.");
+        throw std::runtime_error("Load a PNG or DDS retexture first.");
+    const auto bytes = ReadFile(std::filesystem::u8path(material.retexturePath));
+    if (BUCRC().GenerateRaw(bytes.data(), bytes.size()) != material.retextureCRC)
+        throw std::runtime_error("Retexture changed on disk. Reload it to preview it before applying.");
 
     const CMChunkResourceHeader header = *material.packageTexture;
     const RZTexture texture = RZTexture::Load(*shown.package, header);

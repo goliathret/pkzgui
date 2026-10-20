@@ -13,6 +13,8 @@ enum class Command
     FindPackage,
     ExtractTexture,
     ReplaceTexture,
+    ExtractTextureDds,
+    ReplaceTextureDds,
     ExtractAudio,
     PlayAudio,
     ToggleTheme,

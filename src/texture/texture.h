@@ -1,12 +1,14 @@
 #pragma once
 #include "package/package_session.h"
 #include "Resource/RZTexture.h"
+#include "BaseUtils/BUPng.h"
 #include <string>
 
 constexpr uint32_t kMaxTextureSize = 4096;
 
 CMChunkResourceHeader SelectedTextureHeader(const PackageSession& session);
 RZTexture SelectedTexture(const PackageSession& session);
+BUPng::Image DecodeTextureImage(const std::vector<uint8_t>& file);
 void ExtractTexture(const PKPackage& package, const CMChunkResourceHeader& header, const std::string& path);
 void ReplaceTexture(PackageSession& session, const CMChunkResourceHeader& header, const std::string& path,
     uint32_t width, uint32_t height);

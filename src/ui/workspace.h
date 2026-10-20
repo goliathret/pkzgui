@@ -38,6 +38,7 @@ private:
         std::string path;
         int width = 0;
         int height = 0;
+        bool dds = false;
     };
 
     bool IsBusy() const;
@@ -50,8 +51,8 @@ private:
 
     void OpenPackage();
     void SavePackage(bool chooseDestination);
-    void ExtractSelectedTexture();
-    void BeginTextureReplacement();
+    void ExtractSelectedTexture(bool dds = false);
+    void BeginTextureReplacement(bool dds = false);
     void ApplyTextureReplacement();
     void ExtractSelectedAudio();
     void PlaySelectedAudio();

@@ -56,6 +56,8 @@ namespace
     constexpr MenuItem kTextureItems[] = {
         {"Extract texture (PNG)...", nullptr, Command::ExtractTexture},
         {"Replace texture (PNG)...", nullptr, Command::ReplaceTexture},
+        {"Extract texture (DDS)...", nullptr, Command::ExtractTextureDds},
+        {"Replace texture (DDS)...", nullptr, Command::ReplaceTextureDds},
     };
     constexpr MenuItem kAudioItems[] = {
         {"Extract sample (WAV)...", nullptr, Command::ExtractAudio},
