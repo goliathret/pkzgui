@@ -6,6 +6,7 @@
 #include "package/package_session.h"
 #include "package/package_search.h"
 #include "texture/texture.h"
+#include "Resource/TextureUsage.h"
 #include "ui/widgets.h"
 #include <optional>
 #include <string>
@@ -64,6 +65,8 @@ private:
     void DrawInspectorColumn(float height);
     void DrawFields();
     void DrawModelActionsPanel();
+    void DrawTextureReferencesPanel();
+    void NavigateTextureReference();
     void DrawStatusBar(float height);
 
     void DrawBusyOverlay();
@@ -84,6 +87,12 @@ private:
     SelectionKey searchKey;
     char searchText[256] = {};
     bool focusSearch = false;
+    bool revealSelection = false;
+    TextureUsageIndex textureUsageIndex;
+    SelectionKey usageIndexKey;
+    SelectionKey usageSelection;
+    std::vector<TextureUsageIndex::Usage> textureUsages;
+    std::optional<TextureUsageIndex::Usage> pendingTextureReference;
     SelectionKey refreshed;
     std::optional<CMChunkResourceHeader> resource;
     std::optional<RZAudioSample> audio;

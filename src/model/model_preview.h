@@ -30,6 +30,7 @@ public:
 
     void SetTextured(bool enabled);
     void SelectEnvironmentPart(size_t part);
+    void SelectMaterial(size_t material);
     size_t EnvironmentPartCount() const { return environment ? environment->parts.size() : 0; }
     const std::string& EnvironmentPartName(size_t part) const { return environment->parts.at(part).name; }
 
