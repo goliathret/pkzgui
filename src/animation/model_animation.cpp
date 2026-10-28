@@ -8,7 +8,7 @@ void ModelPreview::SelectAnimation(size_t index)
 {
     if (!shown.package || !animationSkeleton || index >= animationChoices.size())
         throw std::runtime_error("Select a compatible animation first.");
-    auto clip = RZHAnim::Load(*shown.package, *animationChoices[index].resource);
+    auto clip = RZHAnim::Load(*animationChoices[index].package, *animationChoices[index].resource);
     auto placement = AnimationPreviewPlacement(clip, *animationSkeleton);
     if (animationSkin && bindGeometry)
     {
@@ -126,7 +126,10 @@ void ModelPreview::DrawAnimationControls()
         for (size_t i = 0; i < animationRigs.size(); ++i)
         {
             ImGui::PushID(int(i));
-            if (ImGui::Selectable(animationRigs[i].name.c_str(), selectedRig == int(i)))
+            const std::string label = i < rigSources.size() && rigSources[i] != shown.package
+                                          ? animationRigs[i].name + " (" + RigPackageName() + ")"
+                                          : animationRigs[i].name;
+            if (ImGui::Selectable(label.c_str(), selectedRig == int(i)))
             {
                 try
                 {

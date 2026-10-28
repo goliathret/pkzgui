@@ -1,4 +1,6 @@
+#include "animation/rig_match.h"
 #include "model/model_preview.h"
+#include "platform/platform.h"
 #include <algorithm>
 #include <functional>
 #include <stdexcept>
@@ -30,11 +32,13 @@ int RigScore(const CMChunkResourceHeader& candidate, const CMChunkResourceHeader
 {
     int match = 0;
     if (std::find(linkedRigs.begin(), linkedRigs.end(), candidate.GetCRC()) != linkedRigs.end())
-        match = 3;
+        match = 3 << 8;
     else if (candidate.GetCRC() == model.GetCRC())
-        match = 2;
+        match = 2 << 8;
     else if (candidate.GetName() == model.GetName())
-        match = 1;
+        match = 1 << 8;
+    else
+        match = int(RigPrefixLength(candidate.GetName(), model.GetName()));
     return match ? match * 2 + (candidate.GetLanguageMask() == model.GetLanguageMask()) : -1;
 }
 } // namespace
@@ -64,41 +68,53 @@ void ModelPreview::InitializeAnimations(const PKPackage& package, const CMChunkR
 
         int bestScore = -1, bestRig = -1;
         bool ambiguous = false;
-        VisitMainChunks(package, [&](const CMChunk& chunk) {
-            if (chunk.GetMaskedID() != GenSub_Resource)
-                return;
-            const auto* header = chunk.FindChild(GenSub_ResourceHeader);
-            if (!header)
-                return;
-            const CMChunkResourceHeader candidate(*header);
-            if (candidate.GetResourceType() != kCMResourceType_Hierarchy || !SameVariant(candidate, model) ||
-                (isHierarchy && candidate.GetCRC() != model.GetCRC()))
-                return;
-            try
-            {
-                auto skeleton = RZHierarchy::Load(chunk, package.isLittleEndian);
-                if (animationSkin)
-                    animationSkin->Validate(skeleton);
-                animationRigs.push_back(std::move(skeleton));
-            }
-            catch (const std::exception&)
-            {
-                return; // Unsupported hierarchy or palette; not a valid manual choice.
-            }
-            const int score = RigScore(candidate, model, linkedRigs);
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestRig = int(animationRigs.size() - 1);
-                ambiguous = false;
-            }
-            else if (score >= 0 && score == bestScore)
-                ambiguous = true;
-        });
+        std::vector<uint32_t> found;
+        for (const PKPackage* source : {&package, static_cast<const PKPackage*>(rigPackage.get())})
+        {
+            if (!source || (source == rigPackage.get() && isHierarchy))
+                continue;
+            VisitMainChunks(*source, [&](const CMChunk& chunk) {
+                if (chunk.GetMaskedID() != GenSub_Resource)
+                    return;
+                const auto* header = chunk.FindChild(GenSub_ResourceHeader);
+                if (!header)
+                    return;
+                const CMChunkResourceHeader candidate(*header);
+                if (candidate.GetResourceType() != kCMResourceType_Hierarchy || !SameVariant(candidate, model) ||
+                    (isHierarchy && candidate.GetCRC() != model.GetCRC()) ||
+                    (source != &package && std::find(found.begin(), found.end(), candidate.GetCRC()) != found.end()))
+                    return;
+                try
+                {
+                    auto skeleton = RZHierarchy::Load(chunk, source->isLittleEndian);
+                    if (animationSkin)
+                        animationSkin->Validate(skeleton);
+                    animationRigs.push_back(std::move(skeleton));
+                    rigSources.push_back(source);
+                    found.push_back(candidate.GetCRC());
+                }
+                catch (const std::exception&)
+                {
+                    return; // Unsupported hierarchy or palette; not a valid manual choice.
+                }
+                const int score = RigScore(candidate, model, linkedRigs);
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bestRig = int(animationRigs.size() - 1);
+                    ambiguous = false;
+                }
+                else if (score >= 0 && score == bestScore)
+                    ambiguous = true;
+            });
+        }
         if (bestRig >= 0 && !ambiguous)
             SelectAnimationRig(size_t(bestRig));
         else if (!animationRigs.empty())
             Log("Animation: choose a shared rig in Animation...; no unique model/rig reference was found.");
+        else if (!isHierarchy)
+            Log("Animation: no supported rig in this package. Use \"Rig from another package...\" for models that "
+                "share the base game's rig.");
         else
             Log("Animation: no supported rig in this package.");
     }
@@ -110,9 +126,9 @@ void ModelPreview::InitializeAnimations(const PKPackage& package, const CMChunkR
 
 void ModelPreview::SelectAnimationRig(size_t index)
 {
-    if (!shown.package || index >= animationRigs.size())
+    if (!shown.package || index >= animationRigs.size() || index >= rigSources.size())
         throw std::runtime_error("Select a rig from the current package.");
-    const auto& package = *shown.package;
+    const auto& package = *rigSources[index];
     const auto& skeleton = animationRigs[index];
     if (animationSkin)
         animationSkin->Validate(skeleton);
@@ -134,7 +150,7 @@ void ModelPreview::SelectAnimationRig(size_t index)
             if (clip.IsAdditive())
                 ++additive;
             else
-                choices.push_back({std::move(clip), &chunk});
+                choices.push_back({std::move(clip), &chunk, &package});
         }
         catch (const std::exception&)
         {
@@ -157,4 +173,26 @@ void ModelPreview::SelectAnimationRig(size_t index)
         Log("Skipped " + std::to_string(additive) + " additive clips that require a base animation.");
     if (skipped)
         Log("Skipped " + std::to_string(skipped) + " animation resources with invalid metadata.");
+}
+
+void ModelPreview::UseRigPackage(std::unique_ptr<PKPackage> package, const std::string& path)
+{
+    if (!package || package->rootChunks.empty())
+        throw std::runtime_error("The rig package is empty.");
+    animationChoices.clear();
+    rigPackage = std::move(package);
+    rigPackagePath = path;
+    shown = {};
+}
+
+void ModelPreview::LoadRigPackage(const std::string& path)
+{
+    auto package = std::make_unique<PKPackage>();
+    package->ReadFromMemoryAutoEndian(ReadFile(std::filesystem::u8path(path)));
+    UseRigPackage(std::move(package), path);
+}
+
+std::string ModelPreview::RigPackageName() const
+{
+    return rigPackage ? std::filesystem::u8path(rigPackagePath).filename().u8string() : std::string();
 }

@@ -1,4 +1,5 @@
 #include "animation/animation_placement.h"
+#include "animation/rig_match.h"
 #include "model/gltf_export.h"
 #include "model/skin_view.h"
 #include <cmath>
@@ -97,6 +98,15 @@ void PreviewPlacement()
     const auto independent = AnimationPreviewPlacement(clip, rig);
     Check(Near(independent.m[3][0], 0) && Near(independent.m[3][1], 0) && Near(independent.m[0][0], 1),
           "An arbitrary root was chosen for independent hierarchies");
+}
+void RigMatching()
+{
+    Check(RigBaseName("SpiderManAmazing[Hi]") == "spidermanamazing", "Rig names keep their tags");
+    Check(RigPrefixLength("SpiderManAmazing[Hi]", "SpiderManAmazingProdigy[Hi]") == 16,
+          "A costume does not match its hero rig");
+    Check(RigPrefixLength("SpiderManAmazing[Hi]", "SpiderManAmazing[Hi]") == 0, "An exact name counted as a prefix");
+    Check(RigPrefixLength("SpiderMan2099_Ghost[Hi]", "SpiderManAmazingProdigy[Hi]") == 0,
+          "An unrelated rig matched a costume");
 }
 void SkinView()
 {
@@ -214,6 +224,7 @@ int main()
     try
     {
         PreviewPlacement();
+        RigMatching();
         SkinView();
     }
     catch (const std::exception& ex)

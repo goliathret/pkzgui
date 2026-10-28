@@ -561,6 +561,7 @@ void ModelPreview::Clear()
     animationClip.reset();
     animationChoices.clear();
     animationRigs.clear();
+    rigSources.clear();
     selectedRig = -1;
     animationPlacement = BUMatrix{};
     animationSkeleton.reset();

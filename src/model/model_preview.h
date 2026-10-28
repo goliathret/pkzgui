@@ -7,6 +7,7 @@
 #include "Resource/RZGeometry.h"
 #include "Resource/RZEnvironment.h"
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -46,6 +47,9 @@ public:
     size_t AnimationRigCount() const { return animationRigs.size(); }
     const std::string& AnimationRigName(size_t index) const { return animationRigs.at(index).name; }
     void SelectAnimationRig(size_t index);
+    void UseRigPackage(std::unique_ptr<PKPackage> package, const std::string& path);
+    void LoadRigPackage(const std::string& path);
+    std::string RigPackageName() const;
     void SetAnimationGrounded(bool enabled);
     size_t AnimationCount() const { return animationChoices.size(); }
     const std::string& AnimationName(size_t index) const { return animationChoices.at(index).clip.name; }
@@ -132,8 +136,12 @@ private:
     {
         RZHAnim clip;
         const CMChunk* resource;
+        const PKPackage* package;
     };
     std::vector<RZHierarchy> animationRigs;
+    std::vector<const PKPackage*> rigSources;
+    std::unique_ptr<PKPackage> rigPackage;
+    std::string rigPackagePath;
     int selectedRig = -1;
     BUMatrix animationPlacement;
     bool animationGrounded = true;

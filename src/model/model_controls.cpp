@@ -425,6 +425,29 @@ void ModelPreview::DrawGeometryIO(PackageSession& session, GLFWwindow* window)
     const bool exportGlb = ImGui::Button("Export glTF (.glb)...", fullWidth);
     ImGui::EndDisabled();
     ImGui::SetItemTooltip("%s", GlbExportSummary().c_str());
+    if (!isHierarchy && animationSkin)
+    {
+        const std::string rigLabel =
+            rigPackage ? "Rigs also from " + RigPackageName() + "..." : std::string("Rig from another package...");
+        if (ImGui::Button(rigLabel.c_str(), fullWidth))
+        {
+            const auto path = PickOpenFile(window, "Goliath package", "pak,pkz");
+            if (!path.empty())
+            {
+                try
+                {
+                    LoadRigPackage(path);
+                    Log("Rig package: " + RigPackageName() + " is searched for rigs and clips.");
+                }
+                catch (const std::exception& ex)
+                {
+                    Log("Rig package: " + std::string(ex.what()));
+                }
+            }
+        }
+        ImGui::SetItemTooltip("Costumes and DLC suits use a rig kept in another package. Pick the package that holds "
+                              "it (for example BaseGameplay.pak) to get bones, weights and clips.");
+    }
     if (exportGlb)
     {
         const auto path = PickSaveFile(window, "glTF binary", "glb", SanitizeFileName(name) + ".glb");
