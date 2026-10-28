@@ -1141,7 +1141,7 @@ unsigned int ModelPreview::MaterialTexture(size_t index)
             texture.desc.height > ModelRenderer::kMaxTextureSize)
             throw std::runtime_error("Unsupported or oversized material texture.");
         material.texture = renderer.UploadTexture(texture.DecodeLevel0(), texture.desc.width, texture.desc.height,
-            info.addressMode == 1);
+            info.clamp == 1);
     }
     catch (const std::exception& ex)
     {

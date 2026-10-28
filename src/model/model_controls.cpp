@@ -49,7 +49,7 @@ namespace
         {
             const auto& sampler = material.samplers[i];
             json << Separator(i) << "\n    {\"slot\":" << i << ",\"crc\":" << sampler.crc
-                << ",\"addressMode\":" << unsigned(sampler.addressMode)
+                << ",\"clamp\":" << unsigned(sampler.clamp)
                 << ",\"sourcePath\":" << JsonString(sampler.sourcePath) << '}';
         }
         json << "\n  ]";
@@ -69,7 +69,7 @@ namespace
         for (size_t i = 0; i < material.passes.size(); ++i)
         {
             const auto& pass = material.passes[i];
-            json << Separator(i) << "\n    {\"slot\":" << pass.slot << ",\"set\":" << pass.set
+            json << Separator(i) << "\n    {\"technique\":" << pass.technique << ",\"variant\":" << pass.variant
                 << ",\"format\":" << pass.format;
             WriteShader(json, binary, "vertex", material, pass.vertex);
             WriteShader(json, binary, "pixel", material, pass.pixel);
@@ -84,8 +84,8 @@ namespace
         for (size_t i = 0; i < material.declarations.size(); ++i)
         {
             const auto& declaration = material.declarations[i];
-            json << Separator(i) << "\n    {\"format\":" << declaration.format << ",\"slot\":" << declaration.slot
-                << ",\"set\":" << declaration.set << ",\"attributes\":[";
+            json << Separator(i) << "\n    {\"format\":" << declaration.format << ",\"technique\":" << declaration.technique
+                << ",\"variant\":" << declaration.variant << ",\"attributes\":[";
             for (size_t j = 0; j < declaration.elements.size(); ++j)
             {
                 const auto& element = declaration.elements[j];
