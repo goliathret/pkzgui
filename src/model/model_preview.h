@@ -41,6 +41,7 @@ public:
     void ApplyRetexture(PackageSession& session, size_t material);
     void ApplyMaterialFlags(PackageSession& session, size_t material, uint32_t flags);
     void ExportGeometryObj(const std::string& path) const;
+    void ExportGeometryGlb(const std::string& path, bool includeAnimation = true) const;
     size_t AnimationRigCount() const { return animationRigs.size(); }
     const std::string& AnimationRigName(size_t index) const { return animationRigs.at(index).name; }
     void SelectAnimationRig(size_t index);

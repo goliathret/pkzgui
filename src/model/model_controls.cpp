@@ -416,6 +416,28 @@ void ModelPreview::DrawGeometryIO(PackageSession& session, GLFWwindow* window)
             Log("Exported OBJ: " + path);
         }
     }
+
+    const bool canGlb = !geometry.meshes.empty() && !isHierarchy;
+    ImGui::BeginDisabled(!canGlb);
+    const bool exportGlb = ImGui::Button("Export glTF (.glb)...", fullWidth);
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip(
+        "Binary glTF 2.0");
+    if (exportGlb)
+    {
+        const auto path = PickSaveFile(window, "glTF binary", "glb", SanitizeFileName(name) + ".glb");
+        if (!path.empty())
+        {
+            const bool withAnim = animationClip.has_value();
+            ExportGeometryGlb(path, withAnim);
+            std::string detail = "Exported glTF: " + path;
+            if (animationSkeleton)
+                detail += " (skeleton " + std::to_string(animationSkeleton->bones.size()) + " bones)";
+            if (withAnim)
+                detail += " + animation \"" + animationClip->name + "\"";
+            Log(detail);
+        }
+    }
 }
 
 void ModelPreview::DrawShaderExport(GLFWwindow* window, size_t index)

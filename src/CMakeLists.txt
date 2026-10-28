@@ -45,6 +45,7 @@ add_library(pkzgui_lib STATIC
     app/application.cpp
     audio/audio.cpp
     hud/hud_preview.cpp
+    model/gltf_export.cpp
     model/model_controls.cpp
     model/model_preview.cpp
     model/model_renderer.cpp

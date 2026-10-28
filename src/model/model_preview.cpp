@@ -1,8 +1,10 @@
 ﻿#include "model/model_preview.h"
+#include "model/gltf_export.h"
 #include "platform/platform.h"
 #include "render/gl.h"
 #include "texture/texture.h"
 #include "ui/widgets.h"
+#include "Resource/RZTexture.h"
 #include "BaseUtils/BUCRC.h"
 #include "BaseUtils/BUPng.h"
 #include "imgui.h"
@@ -941,6 +943,78 @@ void ModelPreview::ExportGeometryObj(const std::string& path) const
 
     const std::string text = out.str();
     WriteFile(std::filesystem::u8path(path), std::vector<uint8_t>(text.begin(), text.end()));
+}
+
+void ModelPreview::ExportGeometryGlb(const std::string& path, bool includeAnimation) const
+{
+    if (geometry.meshes.empty() && !isHierarchy)
+        throw std::runtime_error("No meshes to export.");
+
+    // Prefer bind-pose geometry so the skin deforms correctly in the viewer.
+    const RZGeometry& src = (bindGeometry && !bindGeometry->meshes.empty()) ? *bindGeometry : geometry;
+    if (src.meshes.empty())
+        throw std::runtime_error("No meshes to export.");
+
+    std::vector<GlbTextureImage> images;
+    if (shown.package)
+    {
+        for (size_t mi = 0; mi < materials.size() && mi < src.materials.size(); ++mi)
+        {
+            const auto& state = materials[mi];
+            // Prefer a loaded retexture file (already PNG/DDS on disk).
+            if (state.useRetexture && !state.retexturePath.empty())
+            {
+                try
+                {
+                    const auto bytes = ReadFile(std::filesystem::u8path(state.retexturePath));
+                    const auto image = DecodeTextureImage(bytes);
+                    GlbTextureImage img;
+                    img.name = src.materials[mi].name;
+                    img.materialIndex = mi;
+                    img.pngBytes = BUPng::EncodeRGBA8(image.rgba.data(), image.width, image.height);
+                    images.push_back(std::move(img));
+                    continue;
+                }
+                catch (...)
+                {
+                }
+            }
+            if (!state.packageTexture)
+                continue;
+            try
+            {
+                const RZTexture texture = RZTexture::Load(*shown.package, *state.packageTexture);
+                if (!texture.desc.Is2D())
+                    continue;
+                const auto rgba = texture.DecodeLevel0();
+                GlbTextureImage img;
+                img.name = src.materials[mi].name;
+                img.materialIndex = mi;
+                img.pngBytes = BUPng::EncodeRGBA8(rgba.data(), texture.PreviewWidth(), texture.desc.height);
+                images.push_back(std::move(img));
+            }
+            catch (...)
+            {
+                // Skip missing/unsupported textures; mesh still exports.
+            }
+        }
+    }
+
+    const RZHierarchy* skel = nullptr;
+    if (animationSkeleton)
+        skel = &*animationSkeleton;
+    else if (isHierarchy && boneCount > 0)
+    {
+        // Hierarchy-only view: skeleton was loaded into bone* arrays but the
+        // full RZHierarchy lives in animationRigs when a rig was chosen.
+        if (selectedRig >= 0 && size_t(selectedRig) < animationRigs.size())
+            skel = &animationRigs[size_t(selectedRig)];
+    }
+
+    const RZGeometrySkin* skinPtr = animationSkin ? &*animationSkin : nullptr;
+    const RZHAnim* clipPtr = (includeAnimation && animationClip) ? &*animationClip : nullptr;
+
+    ::ExportGeometryGlb(path, src, images, skel, skinPtr, clipPtr, 30.0f);
 }
 
 const std::optional<CMChunkResourceHeader>& ModelPreview::PackageTexture(size_t material) const
