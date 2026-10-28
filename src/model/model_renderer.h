@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <vector>
 
+struct Mat4;
+
 class ModelRenderer
 {
 public:
@@ -26,6 +28,14 @@ public:
         float uvDivisor = 1.0f;
         bool alphaCutout = false;
         bool visible = true;
+        bool vertexColors = false;
+    };
+
+    struct BoneOverlay
+    {
+        const std::vector<BUVector3>* positions = nullptr;
+        const std::vector<uint32_t>* parents = nullptr;
+        int highlighted = -1;
     };
 
     bool drawNoTex = false;
@@ -36,10 +46,11 @@ public:
     ModelRenderer& operator=(const ModelRenderer&) = delete;
 
     void Render(const std::vector<RZGeometry::Mesh>& meshes, const std::vector<MeshStyle>& styles,
-        const OrbitCamera& camera, bool twoSided, int width, int height);
+        const OrbitCamera& camera, bool twoSided, int width, int height, const BoneOverlay* bones = nullptr);
     void RenderSkeleton(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents,
-        const OrbitCamera& camera, int width, int height);
+        const OrbitCamera& camera, int width, int height, int highlighted = -1);
     void UpdateVertices(const std::vector<RZGeometry::Mesh>& meshes);
+    void SetVertexColors(std::vector<std::vector<float>> colors);
     Texture UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height, bool clampToEdge = false);
     void DeleteTexture(Texture& texture);
     void Release();
@@ -55,7 +66,9 @@ private:
         unsigned int normals = 0;
         unsigned int texcoords = 0;
         unsigned int indices = 0;
+        unsigned int colors = 0;
         size_t vertexCount = 0;
+        bool hasColors = false;
     };
 
     void EnsureProgram();
@@ -63,12 +76,17 @@ private:
     void EnsureGrid();
     void EnsureWhiteTexture();
     void EnsureSkeleton();
+    void DrawBones(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents, int highlighted,
+        const Mat4& modelViewProjection, const OrbitCamera& camera, bool overlay);
     void UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes);
+    void UploadVertexColors();
     void ReleaseFramebuffer();
     void ReleaseMultisampleFramebuffer();
     int Uniform(const char* name) const;
 
     std::vector<GpuMesh> gpuMeshes;
+    std::vector<std::vector<float>> vertexColors;
+    bool vertexColorsDirty = false;
     unsigned int program = 0;
     unsigned int framebuffer = 0;
     unsigned int colorTexture = 0;

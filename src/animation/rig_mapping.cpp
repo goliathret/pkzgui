@@ -44,7 +44,10 @@ void ModelPreview::InitializeAnimations(const PKPackage& package, const CMChunkR
     try
     {
         if (!isHierarchy)
+        {
             animationSkin = RZGeometrySkin::Load(package, model, geometry);
+            skinSummary = SummarizeSkin(*animationSkin);
+        }
 
         std::vector<uint32_t> linkedRigs;
         VisitMainChunks(package, [&](const CMChunk& chunk) {
@@ -139,8 +142,11 @@ void ModelPreview::SelectAnimationRig(size_t index)
         }
     });
 
-    ResetAnimation();
     animationSkeleton = skeleton;
+    boneNames.clear();
+    for (const auto& bone : skeleton.bones)
+        boneNames.push_back(bone.name);
+    ResetAnimation();
     if (!isHierarchy && !bindGeometry)
         bindGeometry = geometry;
     selectedRig = int(index);

@@ -566,6 +566,9 @@ void ModelPreview::Clear()
     animationSkeleton.reset();
     animationSkin.reset();
     bindGeometry.reset();
+    skinSummary.reset();
+    selectedBone = -1;
+    vertexColorsDirty = true;
     shown = {};
     environment.reset();
     environmentPart = 0;
@@ -639,43 +642,16 @@ void ModelPreview::Draw()
     drawList->AddImage(static_cast<ImTextureID>(renderer.FrameTexture()), origin,
         ImVec2(origin.x + available.x, origin.y + available.y), ImVec2(0, 1), ImVec2(1, 0));
 
-    if (isHierarchy && !bonePositions.empty() && ImGui::IsItemHovered())
+    if ((isHierarchy || showSkeleton) && !bonePositions.empty() && ImGui::IsItemHovered())
     {
-        const ImVec2 mouse = ImGui::GetIO().MousePos;
-        const BUVector3 eye = camera.Eye();
-        const Mat4 view = Mat4::LookAt(eye, camera.target, camera.Up());
-        const Mat4 projection =
-            Mat4::Perspective(OrbitCamera::kFieldOfView, available.x / std::max(available.y, 1.0f),
-                              OrbitCamera::kNearPlane, camera.distance * 20.0f + 10.0f);
-        const Mat4 mvp = projection * view;
-        int best = -1;
-        float bestDist = 12.0f;
-        for (size_t i = 0; i < bonePositions.size(); ++i)
+        const ImGuiIO& io = ImGui::GetIO();
+        const int bone = BoneAt(origin, available, io.MousePos);
+        if (bone >= 0)
         {
-            const BUVector3& p = bonePositions[i];
-            const float x = mvp.m[0] * p.x + mvp.m[4] * p.y + mvp.m[8] * p.z + mvp.m[12];
-            const float y = mvp.m[1] * p.x + mvp.m[5] * p.y + mvp.m[9] * p.z + mvp.m[13];
-            const float w = mvp.m[3] * p.x + mvp.m[7] * p.y + mvp.m[11] * p.z + mvp.m[15];
-            if (w <= 0.0f)
-                continue;
-            const float sx = origin.x + (x / w * 0.5f + 0.5f) * available.x;
-            const float sy = origin.y + (1.0f - (y / w * 0.5f + 0.5f)) * available.y;
-            const float dx = mouse.x - sx;
-            const float dy = mouse.y - sy;
-            const float dist = std::sqrt(dx * dx + dy * dy);
-            if (dist < bestDist)
-            {
-                bestDist = dist;
-                best = static_cast<int>(i);
-            }
-        }
-        if (best >= 0)
-        {
-            const std::string& boneName =
-                best < static_cast<int>(boneNames.size()) && !boneNames[best].empty()
-                ? boneNames[best]
-                : ("bone " + std::to_string(best));
-            ImGui::SetTooltip("%s", boneName.c_str());
+            ImGui::SetTooltip("%s", BoneLabel(size_t(bone)).c_str());
+            if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+                io.MouseDragMaxDistanceSqr[ImGuiMouseButton_Left] < 16.0f)
+                SelectBone(bone);
         }
     }
 
@@ -704,6 +680,14 @@ void ModelPreview::DrawFields() const
     FieldRow("meshes", "u32", std::to_string(geometry.meshes.size()));
     FieldRow("vertices", "u32", std::to_string(vertexCount));
     FieldRow("triangles", "u32", std::to_string(triangleCount));
+    if (skinSummary)
+    {
+        FieldRow("skin", "", std::to_string(skinSummary->weighted) + " of " + std::to_string(skinSummary->vertices) +
+                                 " vertices weighted, up to " + std::to_string(skinSummary->maxInfluences) +
+                                 " bones each");
+        FieldRow("rig", "string", animationSkeleton ? animationSkeleton->name : "none selected");
+        FieldRow("glTF export", "", GlbExportSummary());
+    }
 }
 
 std::vector<std::string> ModelPreview::TakeLogMessages()
@@ -1093,12 +1077,27 @@ void ModelPreview::RenderFrame(int width, int height)
 {
     if (isHierarchy)
     {
-        renderer.RenderSkeleton(bonePositions, boneParents, camera, width, height);
+        renderer.RenderSkeleton(bonePositions, boneParents, camera, width, height, selectedBone);
         return;
     }
-    const auto styles = MeshStyles();
+    const bool skinShaded = animationSkin && skinShading != SkinShading::Material;
+    if (vertexColorsDirty)
+    {
+        renderer.SetVertexColors(skinShaded ? SkinVertexColors(*animationSkin, skinShading, selectedBone)
+                                            : std::vector<std::vector<float>>{});
+        vertexColorsDirty = false;
+    }
+    auto styles = MeshStyles();
+    if (skinShaded)
+        for (auto& style : styles)
+        {
+            style.vertexColors = true;
+            style.visible = true;
+        }
     if (animationSkin) renderer.UpdateVertices(geometry.meshes);
-    renderer.Render(geometry.meshes, styles, camera, twoSided, width, height);
+    const ModelRenderer::BoneOverlay bones{&bonePositions, &boneParents, selectedBone};
+    renderer.Render(geometry.meshes, styles, camera, twoSided, width, height,
+                    showSkeleton && !bonePositions.empty() ? &bones : nullptr);
 }
 
 std::vector<ModelRenderer::MeshStyle> ModelPreview::MeshStyles()

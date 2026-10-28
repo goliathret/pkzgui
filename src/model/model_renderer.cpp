@@ -14,22 +14,26 @@ namespace
         kPositionAttribute = 0,
         kNormalAttribute = 1,
         kTexCoordAttribute = 2,
+        kColorAttribute = 3,
     };
 
     const char* const kVertexShader = R"(
 in vec3 aPos;
 in vec3 aNrm;
 in vec2 aUV;
+in vec3 aColor;
 uniform mat4 uMVP;
 uniform mat4 uModel;
 uniform float uUVDivisor;
 out vec3 vNrm;
 out vec3 vWorld;
 out vec2 vUV;
+out vec3 vColor;
 void main() {
     vec4 world = uModel * vec4(aPos, 1.0);
     vWorld = world.xyz;
     vUV = aUV / uUVDivisor;
+    vColor = aColor;
     vNrm = mat3(uModel) * aNrm;
     gl_Position = uMVP * vec4(aPos, 1.0);
 }
@@ -39,9 +43,11 @@ void main() {
 in vec3 vNrm;
 in vec3 vWorld;
 in vec2 vUV;
+in vec3 vColor;
 uniform sampler2D uTexture;
 uniform bool uTextured;
 uniform bool uAlphaCutout;
+uniform bool uVertexColors;
 uniform vec3 uLightDir;
 uniform vec3 uViewPos;
 uniform vec3 uColor;
@@ -53,9 +59,9 @@ void main() {
     vec3 viewDir = normalize(uViewPos - vWorld);
     vec3 halfDir = normalize(l + viewDir);
     float specularTerm = pow(max(dot(n, halfDir), 0.0), 32.0);
-    vec4 albedo = uTextured ? texture(uTexture, vUV) : vec4(1.0);
-    if (uTextured && uAlphaCutout && albedo.a < 0.3) discard;
-    vec3 base = uColor * albedo.rgb;
+    vec4 albedo = uTextured && !uVertexColors ? texture(uTexture, vUV) : vec4(1.0);
+    if (uTextured && !uVertexColors && uAlphaCutout && albedo.a < 0.3) discard;
+    vec3 base = uVertexColors ? vColor : uColor * albedo.rgb;
     vec3 ambient = 0.35 * base;
     vec3 diffuse = 0.65 * diffuseTerm * base;
     vec3 specular = 0.25 * specularTerm * vec3(1.0);
@@ -182,7 +188,7 @@ void ModelRenderer::EnsureGrid()
 }
 
 void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const std::vector<MeshStyle>& styles,
-    const OrbitCamera& camera, bool twoSided, int width, int height)
+    const OrbitCamera& camera, bool twoSided, int width, int height, const BoneOverlay* bones)
 {
     const GLStateGuard savedState;
     EnsureProgram();
@@ -190,6 +196,8 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
     EnsureWhiteTexture();
     if (gpuMeshes.empty())
         UploadMeshes(meshes);
+    if (vertexColorsDirty)
+        UploadVertexColors();
 
     gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer ? msaaFramebuffer : framebuffer);
     glViewport(0, 0, width, height);
@@ -247,11 +255,16 @@ void ModelRenderer::Render(const std::vector<RZGeometry::Mesh>& meshes, const st
         gl3::Uniform1f(Uniform("uUVDivisor"), style.uvDivisor);
         gl3::Uniform1i(Uniform("uTextured"), style.texture != 0);
         gl3::Uniform1i(Uniform("uAlphaCutout"), style.alphaCutout);
+        gl3::Uniform1i(Uniform("uVertexColors"), style.vertexColors && gpuMeshes[i].hasColors);
         gl3::Uniform3f(Uniform("uColor"), style.color[0], style.color[1], style.color[2]);
         glBindTexture(GL_TEXTURE_2D, style.texture ? style.texture : whiteTexture);
         gl3::BindVertexArray(gpuMeshes[i].vertexArray);
         glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(meshes[i].indices.size()), GL_UNSIGNED_INT, nullptr);
     }
+    gl3::BindVertexArray(0);
+
+    if (bones && bones->positions && bones->parents)
+        DrawBones(*bones->positions, *bones->parents, bones->highlighted, modelViewProjection, camera, true);
 
     if (msaaFramebuffer)
     {
@@ -273,12 +286,11 @@ void ModelRenderer::EnsureSkeleton()
 }
 
 void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents,
-    const OrbitCamera& camera, int width, int height)
+    const OrbitCamera& camera, int width, int height, int highlighted)
 {
     const GLStateGuard savedState;
     EnsureFramebuffer(width, height);
     EnsureGrid();
-    EnsureSkeleton();
 
     gl3::BindFramebuffer(GL_FRAMEBUFFER, msaaFramebuffer ? msaaFramebuffer : framebuffer);
     glViewport(0, 0, width, height);
@@ -312,70 +324,7 @@ void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, cons
     gl3::BindVertexArray(0);
     glDisable(GL_BLEND);
 
-    std::vector<float> lineVerts;
-    lineVerts.reserve(positions.size() * 6);
-    for (size_t i = 0; i < positions.size() && i < parents.size(); ++i)
-    {
-        const uint32_t parent = parents[i];
-        if (parent >= positions.size())
-            continue;
-        const BUVector3& a = positions[i];
-        const BUVector3& b = positions[parent];
-        lineVerts.push_back(a.x);
-        lineVerts.push_back(a.y);
-        lineVerts.push_back(a.z);
-        lineVerts.push_back(b.x);
-        lineVerts.push_back(b.y);
-        lineVerts.push_back(b.z);
-    }
-
-    if (!lineVerts.empty())
-    {
-        gl3::BindVertexArray(skeletonLineVAO);
-        gl3::BindBuffer(GL_ARRAY_BUFFER, skeletonLineVBO);
-        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<gl3::SizeIPtr>(lineVerts.size() * sizeof(float)), lineVerts.data(),
-            GL_STATIC_DRAW);
-        gl3::EnableVertexAttribArray(0);
-        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-        gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 1.0f, 0.15f, 0.15f);
-        glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(lineVerts.size() / 3));
-        gl3::BindVertexArray(0);
-    }
-
-    const BUVector3 right = camera.Right();
-    const BUVector3 up = camera.Up();
-
-    const float half = std::max(0.01f, camera.distance * 0.008f);
-    std::vector<float> jointVerts;
-    jointVerts.reserve(positions.size() * 18);
-    for (const BUVector3& p : positions)
-    {
-        const BUVector3 c0 = p + (right * -half) + (up * -half);
-        const BUVector3 c1 = p + (right * half) + (up * -half);
-        const BUVector3 c2 = p + (right * half) + (up * half);
-        const BUVector3 c3 = p + (right * -half) + (up * half);
-        jointVerts.push_back(c0.x); jointVerts.push_back(c0.y); jointVerts.push_back(c0.z);
-        jointVerts.push_back(c1.x); jointVerts.push_back(c1.y); jointVerts.push_back(c1.z);
-        jointVerts.push_back(c2.x); jointVerts.push_back(c2.y); jointVerts.push_back(c2.z);
-        jointVerts.push_back(c0.x); jointVerts.push_back(c0.y); jointVerts.push_back(c0.z);
-        jointVerts.push_back(c2.x); jointVerts.push_back(c2.y); jointVerts.push_back(c2.z);
-        jointVerts.push_back(c3.x); jointVerts.push_back(c3.y); jointVerts.push_back(c3.z);
-    }
-
-    if (!jointVerts.empty())
-    {
-        gl3::BindVertexArray(skeletonJointVAO);
-        gl3::BindBuffer(GL_ARRAY_BUFFER, skeletonJointVBO);
-        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<gl3::SizeIPtr>(jointVerts.size() * sizeof(float)), jointVerts.data(),
-            GL_STATIC_DRAW);
-        gl3::EnableVertexAttribArray(0);
-        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
-        gl3::Uniform3f(gl3::GetUniformLocation(gridProgram, "uColor"), 1.0f, 1.0f, 1.0f);
-        glDisable(GL_DEPTH_TEST);
-        glDrawArrays(GL_TRIANGLES, 0, static_cast<GLsizei>(jointVerts.size() / 3));
-        glEnable(GL_DEPTH_TEST);
-        gl3::BindVertexArray(0);
-    }
+    DrawBones(positions, parents, highlighted, modelViewProjection, camera, false);
 
     if (msaaFramebuffer)
     {
@@ -383,6 +332,78 @@ void ModelRenderer::RenderSkeleton(const std::vector<BUVector3>& positions, cons
         gl3::BindFramebuffer(GL_DRAW_FRAMEBUFFER, framebuffer);
         gl3::BlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     }
+}
+
+void ModelRenderer::DrawBones(const std::vector<BUVector3>& positions, const std::vector<uint32_t>& parents,
+    int highlighted, const Mat4& modelViewProjection, const OrbitCamera& camera, bool overlay)
+{
+    EnsureSkeleton();
+    gl3::UseProgram(gridProgram);
+    gl3::UniformMatrix4fv(gl3::GetUniformLocation(gridProgram, "uMVP"), 1, GL_FALSE, modelViewProjection.m);
+    const GLint colorUniform = gl3::GetUniformLocation(gridProgram, "uColor");
+    const auto draw = [&](GLuint vertexArray, GLuint buffer, const std::vector<float>& vertices, GLenum mode,
+                          float r, float g, float b) {
+        if (vertices.empty())
+            return;
+        gl3::BindVertexArray(vertexArray);
+        gl3::BindBuffer(GL_ARRAY_BUFFER, buffer);
+        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<gl3::SizeIPtr>(vertices.size() * sizeof(float)), vertices.data(),
+            GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(0);
+        gl3::VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+        gl3::Uniform3f(colorUniform, r, g, b);
+        glDrawArrays(mode, 0, static_cast<GLsizei>(vertices.size() / 3));
+        gl3::BindVertexArray(0);
+    };
+    const auto push = [](std::vector<float>& out, const BUVector3& p) {
+        out.push_back(p.x);
+        out.push_back(p.y);
+        out.push_back(p.z);
+    };
+
+    if (overlay)
+        glDisable(GL_DEPTH_TEST);
+    std::vector<float> lines, selectedLines;
+    lines.reserve(positions.size() * 6);
+    for (size_t i = 0; i < positions.size() && i < parents.size(); ++i)
+    {
+        const uint32_t parent = parents[i];
+        if (parent >= positions.size())
+            continue;
+        auto& out = int(i) == highlighted || int(parent) == highlighted ? selectedLines : lines;
+        push(out, positions[i]);
+        push(out, positions[parent]);
+    }
+    if (overlay)
+        draw(skeletonLineVAO, skeletonLineVBO, lines, GL_LINES, 1.0f, 0.55f, 0.1f);
+    else
+        draw(skeletonLineVAO, skeletonLineVBO, lines, GL_LINES, 1.0f, 0.15f, 0.15f);
+    draw(skeletonLineVAO, skeletonLineVBO, selectedLines, GL_LINES, 1.0f, 0.9f, 0.2f);
+
+    const BUVector3 right = camera.Right();
+    const BUVector3 up = camera.Up();
+    const float half = std::max(0.01f, camera.distance * 0.008f);
+    const auto square = [&](std::vector<float>& out, const BUVector3& p, float size) {
+        const BUVector3 c0 = p + (right * -size) + (up * -size);
+        const BUVector3 c1 = p + (right * size) + (up * -size);
+        const BUVector3 c2 = p + (right * size) + (up * size);
+        const BUVector3 c3 = p + (right * -size) + (up * size);
+        for (const BUVector3* corner : {&c0, &c1, &c2, &c0, &c2, &c3})
+            push(out, *corner);
+    };
+    std::vector<float> joints, selectedJoint;
+    joints.reserve(positions.size() * 18);
+    for (size_t i = 0; i < positions.size(); ++i)
+    {
+        if (int(i) == highlighted)
+            square(selectedJoint, positions[i], half * 1.2f);
+        else
+            square(joints, positions[i], overlay ? half * 0.7f : half);
+    }
+    glDisable(GL_DEPTH_TEST);
+    draw(skeletonJointVAO, skeletonJointVBO, joints, GL_TRIANGLES, 1.0f, 1.0f, 1.0f);
+    draw(skeletonJointVAO, skeletonJointVBO, selectedJoint, GL_TRIANGLES, 1.0f, 0.9f, 0.2f);
+    glEnable(GL_DEPTH_TEST);
 }
 
 ModelRenderer::Texture ModelRenderer::UploadTexture(const std::vector<uint8_t>& rgba, uint32_t width, uint32_t height,
@@ -416,6 +437,8 @@ void ModelRenderer::Release()
             gl3::DeleteVertexArrays(1, &mesh.vertexArray);
             const GLuint buffers[] = {mesh.positions, mesh.normals, mesh.texcoords, mesh.indices};
             gl3::DeleteBuffers(4, buffers);
+            if (mesh.colors)
+                gl3::DeleteBuffers(1, &mesh.colors);
         }
         if (whiteTexture)
             glDeleteTextures(1, &whiteTexture);
@@ -438,6 +461,8 @@ void ModelRenderer::Release()
             gl3::DeleteBuffers(1, &skeletonJointVBO);
     }
     gpuMeshes.clear();
+    vertexColors.clear();
+    vertexColorsDirty = false;
     whiteTexture = 0;
     framebuffer = colorTexture = depthBuffer = 0;
     frameWidth = frameHeight = 0;
@@ -470,6 +495,7 @@ void ModelRenderer::EnsureProgram()
     gl3::BindAttribLocation(program, kPositionAttribute, "aPos");
     gl3::BindAttribLocation(program, kNormalAttribute, "aNrm");
     gl3::BindAttribLocation(program, kTexCoordAttribute, "aUV");
+    gl3::BindAttribLocation(program, kColorAttribute, "aColor");
     gl3::LinkProgram(program);
     gl3::DeleteShader(vertexShader);
     gl3::DeleteShader(fragmentShader);
@@ -570,6 +596,33 @@ void ModelRenderer::UploadMeshes(const std::vector<RZGeometry::Mesh>& meshes)
         gpu.vertexCount = mesh.VertexCount();
         gpuMeshes.push_back(gpu);
     }
+}
+
+void ModelRenderer::SetVertexColors(std::vector<std::vector<float>> colors)
+{
+    vertexColors = std::move(colors);
+    vertexColorsDirty = true;
+}
+
+void ModelRenderer::UploadVertexColors()
+{
+    vertexColorsDirty = false;
+    for (size_t i = 0; i < gpuMeshes.size(); ++i)
+    {
+        GpuMesh& gpu = gpuMeshes[i];
+        gpu.hasColors = i < vertexColors.size() && vertexColors[i].size() == gpu.vertexCount * 3;
+        if (!gpu.hasColors)
+            continue;
+        gl3::BindVertexArray(gpu.vertexArray);
+        if (!gpu.colors)
+            gl3::GenBuffers(1, &gpu.colors);
+        gl3::BindBuffer(GL_ARRAY_BUFFER, gpu.colors);
+        gl3::BufferData(GL_ARRAY_BUFFER, static_cast<gl3::SizeIPtr>(vertexColors[i].size() * sizeof(float)),
+            vertexColors[i].data(), GL_STATIC_DRAW);
+        gl3::EnableVertexAttribArray(kColorAttribute);
+        gl3::VertexAttribPointer(kColorAttribute, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+    }
+    gl3::BindVertexArray(0);
 }
 
 void ModelRenderer::UpdateVertices(const std::vector<RZGeometry::Mesh>& meshes)

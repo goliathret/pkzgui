@@ -37,17 +37,8 @@ void ModelPreview::ApplyAnimation()
     if (animationGrounded)
         for (auto& matrix : world)
             matrix = animationPlacement * matrix;
-    if (isHierarchy)
-    {
-        bonePositions.clear();
-        boneParents.clear();
-        for (size_t i = 0; i < world.size(); ++i)
-        {
-            bonePositions.emplace_back(world[i].m[3][0], world[i].m[3][1], world[i].m[3][2]);
-            boneParents.push_back(animationSkeleton->bones[i].parent);
-        }
-    }
-    else if (animationSkin && bindGeometry)
+    UpdateBonePose(world);
+    if (!isHierarchy && animationSkin && bindGeometry)
         animationSkin->Apply(*animationSkeleton, world, *bindGeometry, geometry);
     renderDirty = true;
 }
@@ -110,15 +101,12 @@ void ModelPreview::ResetAnimation()
     animationPlacement = BUMatrix{};
     if (bindGeometry)
         geometry.meshes = bindGeometry->meshes;
-    if (isHierarchy && animationSkeleton)
+    if (animationSkeleton)
     {
         std::vector<CMTransforms> bind;
         for (const auto& bone : animationSkeleton->bones)
             bind.push_back(bone.bind);
-        const auto world = animationSkeleton->WorldPose(bind);
-        bonePositions.clear();
-        for (const auto& matrix : world)
-            bonePositions.emplace_back(matrix.m[3][0], matrix.m[3][1], matrix.m[3][2]);
+        UpdateBonePose(animationSkeleton->WorldPose(bind));
     }
     renderDirty = true;
 }

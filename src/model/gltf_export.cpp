@@ -182,6 +182,7 @@ namespace
         size_t byteLength = 0;
         int componentType = 0;
         std::string type;
+        int target = 0;
         bool normalized = false;
         float min3[3]{}, max3[3]{};
         bool hasMinMax = false;
@@ -199,10 +200,11 @@ namespace
         std::vector<int> jointNodeIndices;
         int skinIndex = -1;
         int meshNodeIndex = -1;
+        int inverseBindAccessor = -1;
         std::vector<std::string> animJson;
 
         Acc& addAccessor(size_t offset, size_t count, size_t strideBytes, int componentType,
-            const std::string& type, bool normalized = false)
+            const std::string& type, int target = 0)
         {
             Acc a;
             a.index = int(accessors.size());
@@ -211,7 +213,7 @@ namespace
             a.byteLength = count * strideBytes;
             a.componentType = componentType;
             a.type = type;
-            a.normalized = normalized;
+            a.target = target;
             accessors.push_back(a);
             return accessors.back();
         }
@@ -315,19 +317,6 @@ void ExportGeometryGlb(const std::string& path,
     Builder b;
 
     std::unordered_map<size_t, int> matToTex;
-    for (const auto& img : textures)
-    {
-        if (img.pngBytes.empty())
-            continue;
-        const size_t off = b.bin.appendBytes(img.pngBytes);
-        const int imageIndex = int(b.imagesJson.size());
-        std::ostringstream ij;
-        ij << "{\"name\":" << JStr(img.name)
-            << ",\"mimeType\":\"image/png\",\"bufferView\":" << imageIndex << '}';
-        b.imagesJson.push_back(ij.str());
-        (void)off;
-        matToTex[img.materialIndex] = imageIndex;
-    }
     struct ImageView
     {
         size_t offset;
@@ -335,8 +324,6 @@ void ExportGeometryGlb(const std::string& path,
         std::string name;
         size_t materialIndex;
     };
-    b.bin.bytes.clear();
-    b.imagesJson.clear();
     std::vector<ImageView> imageViews;
     for (const auto& img : textures)
     {
@@ -381,7 +368,6 @@ void ExportGeometryGlb(const std::string& path,
         b.materialJson.push_back(mj.str());
     }
 
-    bool anyWeights = false;
     for (size_t mi = 0; mi < geometry.meshes.size(); ++mi)
     {
         const RZGeometry::Mesh& mesh = geometry.meshes[mi];
@@ -401,7 +387,7 @@ void ExportGeometryGlb(const std::string& path,
             }
         }
         const size_t posOff = b.bin.append(mesh.positions.data(), vc * 3);
-        const int posAccIdx = b.addAccessor(posOff, vc, 12, 5126, "VEC3").index;
+        const int posAccIdx = b.addAccessor(posOff, vc, 12, 5126, "VEC3", 34962).index;
         {
             Acc& pa = b.accessors[posAccIdx];
             pa.hasMinMax = true;
@@ -413,7 +399,7 @@ void ExportGeometryGlb(const std::string& path,
         if (mesh.normals.size() >= vc * 3)
         {
             const size_t off = b.bin.append(mesh.normals.data(), vc * 3);
-            normAccIndex = b.addAccessor(off, vc, 12, 5126, "VEC3").index;
+            normAccIndex = b.addAccessor(off, vc, 12, 5126, "VEC3", 34962).index;
         }
 
         int uvAccIndex = -1;
@@ -427,7 +413,7 @@ void ExportGeometryGlb(const std::string& path,
                 uvs[v * 2 + 1] = mesh.texcoords[v * 2 + 1] / div;
             }
             const size_t off = b.bin.append(uvs.data(), uvs.size());
-            uvAccIndex = b.addAccessor(off, vc, 8, 5126, "VEC2").index;
+            uvAccIndex = b.addAccessor(off, vc, 8, 5126, "VEC2", 34962).index;
         }
 
         int jointsAcc = -1, weightsAcc = -1;
@@ -435,16 +421,15 @@ void ExportGeometryGlb(const std::string& path,
         {
             std::vector<uint16_t> joints;
             std::vector<float> weights;
-            if (TryReadInfluences(skin, mi, vc, skeleton->bones.size(), joints, weights))
-                anyWeights = true;
+            TryReadInfluences(skin, mi, vc, skeleton->bones.size(), joints, weights);
             const size_t jOff = b.bin.append(joints.data(), joints.size());
-            jointsAcc = b.addAccessor(jOff, vc, 8, 5123, "VEC4").index;
+            jointsAcc = b.addAccessor(jOff, vc, 8, 5123, "VEC4", 34962).index;
             const size_t wOff = b.bin.append(weights.data(), weights.size());
-            weightsAcc = b.addAccessor(wOff, vc, 16, 5126, "VEC4").index;
+            weightsAcc = b.addAccessor(wOff, vc, 16, 5126, "VEC4", 34962).index;
         }
 
         const size_t iOff = b.bin.append(mesh.indices.data(), mesh.indices.size());
-        const int idxAcc = b.addAccessor(iOff, mesh.indices.size(), 4, 5125, "SCALAR").index;
+        const int idxAcc = b.addAccessor(iOff, mesh.indices.size(), 4, 5125, "SCALAR", 34963).index;
 
         const int matIdx = mesh.material < b.materialJson.size() ? int(mesh.material) : 0;
         std::ostringstream pj;
@@ -521,7 +506,7 @@ void ExportGeometryGlb(const std::string& path,
                     ibm[i * 16 + r * 4 + c] = inv.m[r][c];
         }
         const size_t ibmOff = b.bin.append(ibm.data(), ibm.size());
-        const int ibmAcc = b.addAccessor(ibmOff, nb, 64, 5126, "MAT4").index;
+        b.inverseBindAccessor = b.addAccessor(ibmOff, nb, 64, 5126, "MAT4").index;
 
         b.meshNodeIndex = int(b.nodeJson.size());
         {
@@ -532,10 +517,6 @@ void ExportGeometryGlb(const std::string& path,
         }
         sceneRoots.push_back(b.meshNodeIndex);
         b.skinIndex = 0;
-
-        (void)ibmAcc;
-        static_cast<void>(ibmAcc);
-        b.animJson.push_back(std::to_string(ibmAcc));
     }
     else
     {
@@ -544,13 +525,6 @@ void ExportGeometryGlb(const std::string& path,
         nj << "{\"name\":" << JStr(geometry.name.empty() ? "mesh" : geometry.name) << ",\"mesh\":0}";
         b.nodeJson.push_back(nj.str());
         sceneRoots.push_back(b.meshNodeIndex);
-    }
-
-    int animIbmMarker = -1;
-    if (!b.animJson.empty())
-    {
-        animIbmMarker = std::stoi(b.animJson[0]);
-        b.animJson.clear();
     }
 
     if (clip && skeleton && !skeleton->bones.empty() && sampleHz > 0.f && clip->info.duration > 0.f)
@@ -589,10 +563,10 @@ void ExportGeometryGlb(const std::string& path,
         }
 
         const size_t timeOff = b.bin.append(times.data(), times.size());
-        Acc& timeAcc = b.addAccessor(timeOff, times.size(), 4, 5126, "SCALAR");
-        timeAcc.hasMinMax = true;
-        timeAcc.min3[0] = times.front();
-        timeAcc.max3[0] = times.back();
+        const int timeAcc = b.addAccessor(timeOff, times.size(), 4, 5126, "SCALAR").index;
+        b.accessors[timeAcc].hasMinMax = true;
+        b.accessors[timeAcc].min3[0] = times.front();
+        b.accessors[timeAcc].max3[0] = times.back();
 
         std::ostringstream channels, samplers;
         channels << '[';
@@ -636,9 +610,9 @@ void ExportGeometryGlb(const std::string& path,
                     << b.jointNodeIndices[i] << ",\"path\":\"" << path << "\"}}";
                 ++samplerIdx;
                 };
-            addChan("translation", timeAcc.index, tAcc);
-            addChan("rotation", timeAcc.index, rAcc);
-            addChan("scale", timeAcc.index, sAcc);
+            addChan("translation", timeAcc, tAcc);
+            addChan("rotation", timeAcc, rAcc);
+            addChan("scale", timeAcc, sAcc);
         }
         channels << ']';
         samplers << ']';
@@ -666,14 +640,7 @@ void ExportGeometryGlb(const std::string& path,
     const int imageViewBase = 0;
     const int accessorViewBase = int(imageViews.size());
     for (const Acc& a : b.accessors)
-    {
-        int target = 0;
-        if (a.type == "SCALAR" && a.componentType == 5125)
-            target = 34963;
-        else if (a.componentType == 5126 || a.componentType == 5123)
-            target = 34962;
-        emitView(a.offset, a.byteLength, target);
-    }
+        emitView(a.offset, a.byteLength, a.target);
     views << ']';
 
     std::ostringstream accJson;
@@ -789,7 +756,7 @@ void ExportGeometryGlb(const std::string& path,
                 root << ',';
             root << b.jointNodeIndices[i];
         }
-        root << "],\"inverseBindMatrices\":" << animIbmMarker
+        root << "],\"inverseBindMatrices\":" << b.inverseBindAccessor
             << ",\"skeleton\":" << (sceneRoots.empty() ? 0 : sceneRoots.front()) << "}]";
     }
     if (!b.animJson.empty())
@@ -805,24 +772,5 @@ void ExportGeometryGlb(const std::string& path,
     }
     root << '}';
 
-    {
-        const std::string js = root.str();
-        std::ofstream dbg("gltf_debug.json", std::ios::binary);
-        dbg.write(js.data(), std::streamsize(js.size()));
-
-        const size_t p = 102768;
-        if (p < js.size())
-        {
-            std::ofstream ctx("gltf_debug_ctx.txt", std::ios::binary);
-            const size_t s = p > 120 ? p - 120 : 0;
-            ctx << js.substr(s, 240);
-        }
-    }
-
     WriteGlb(path, root.str(), b.bin.bytes);
-
-    if (skeleton && !anyWeights && skin)
-    {
-        (void)skin;
-    }
 }

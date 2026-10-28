@@ -50,6 +50,7 @@ add_library(pkzgui_lib STATIC
     model/model_preview.cpp
     model/model_renderer.cpp
     model/orbit_camera.cpp
+    model/skin_view.cpp
     package/package_search.cpp
     package/package_session.cpp
     platform/platform.cpp

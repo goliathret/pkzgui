@@ -1,5 +1,6 @@
 #pragma once
 #include "model/model_renderer.h"
+#include "model/skin_view.h"
 #include "animation/animation_placement.h"
 #include "Resource/RZGeometrySkin.h"
 #include "package/package_session.h"
@@ -55,6 +56,10 @@ public:
     void AdvanceAnimation(float seconds);
     float AnimationTime() const { return animationTime; }
     bool AnimationPlaying() const { return animationPlaying; }
+    void SetSkinShading(SkinShading shading);
+    void SelectBone(int bone);
+    void SetShowSkeleton(bool show);
+    std::string GlbExportSummary() const;
 
     bool IsActive() const { return active; }
     const std::string& Name() const { return name; }
@@ -66,6 +71,7 @@ public:
 
 private:
     static constexpr size_t kGeometryBudget = 128 * 1024 * 1024;
+    static constexpr const char* kSkinPopup = "Skin view";
 
     struct MaterialState
     {
@@ -99,6 +105,11 @@ private:
     void InitializeAnimations(const PKPackage& package, const CMChunkResourceHeader& resource);
     void ApplyAnimation();
     void DrawAnimationControls();
+    void DrawSkinControls();
+    void UpdateBonePose(const std::vector<BUMatrix>& world);
+    int BoneAt(const ImVec2& origin, const ImVec2& size, const ImVec2& point) const;
+    std::string BoneLabel(size_t bone) const;
+    size_t SkinBoneCount() const;
 
     SelectionKey shown;
     bool active = false;
@@ -134,6 +145,12 @@ private:
     float animationTime = 0;
     int selectedAnimation = -1;
     bool animationPlaying = false, animationLoop = true;
+    std::optional<SkinSummary> skinSummary;
+    SkinShading skinShading = SkinShading::Material;
+    int selectedBone = -1;
+    bool showSkeleton = false;
+    bool vertexColorsDirty = true;
+    char boneFilter[64] = {};
 
     ModelRenderer renderer;
     OrbitCamera camera;
